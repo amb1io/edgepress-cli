@@ -12,9 +12,16 @@ import {
 } from "../engine/resolve-route.ts";
 import { resolveCoverImageSync } from "../engine/cover-image.ts";
 import { isPublicThemeListPost } from "../engine/post-filters.ts";
-import { NON_ARCHIVABLE_POST_TYPE_SLUGS } from "../engine/post-type-routes.ts";
+import {
+  type ArchivablePostType,
+  resolveArchivePostTypeFromRoute,
+} from "../engine/post-type-routes.ts";
 
-const DEV_ARCHIVABLE_SLUGS = new Set(["post", "eventos"]);
+const DEV_ARCHIVABLE_TYPES: ArchivablePostType[] = [
+  { slug: "post", name: "Post" },
+  { slug: "blog", name: "Blog" },
+  { slug: "eventos", name: "Eventos" },
+];
 
 function buildDevLocaleUrl(
   targetLocale: string,
@@ -57,19 +64,13 @@ function buildDevLocaleSwitcher(
 }
 
 function resolveDevArchive(route: ResolvedPublicRoute): { kind: string; postType: string; title: string } | null {
-  if (route.kind === "archive") {
-    const postType = route.postType ?? "post";
-    return { kind: "archive", postType, title: postType === "post" ? "Blog" : postType };
-  }
-  if (route.slug && DEV_ARCHIVABLE_SLUGS.has(route.slug) && !NON_ARCHIVABLE_POST_TYPE_SLUGS.has(route.slug)) {
-    const postType = route.slug;
-    return {
-      kind: "archive",
-      postType,
-      title: postType === "post" ? "Blog" : postType.charAt(0).toUpperCase() + postType.slice(1),
-    };
-  }
-  return null;
+  const resolved = resolveArchivePostTypeFromRoute(route, DEV_ARCHIVABLE_TYPES);
+  if (!resolved) return null;
+  return {
+    kind: "archive",
+    postType: resolved.postType,
+    title: resolved.postType === "post" ? "Blog" : resolved.title,
+  };
 }
 
 export function buildMockContext(

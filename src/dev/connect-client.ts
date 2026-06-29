@@ -18,6 +18,10 @@ import {
   publicLocaleUrlPrefix,
 } from "../engine/resolve-route.ts";
 import { filterPublicThemeListPosts } from "../engine/post-filters.ts";
+import {
+  filterArchivablePostTypes,
+  resolveArchivePostTypeFromRoute,
+} from "../engine/post-type-routes.ts";
 import { buildMockContext } from "./mock-context.ts";
 
 type ApiListResponse<T> = {
@@ -141,6 +145,74 @@ function inferRouteKind(route: ResolvedPublicRoute, post?: ThemePostView): Theme
   return "page";
 }
 
+async function fetchArchivablePostTypes(client: AuthenticatedClient) {
+  try {
+    const list = await fetchJson<ApiListResponse<{ slug?: string; name?: string }>>(
+      client,
+      "/api/content/post_types?limit=100",
+    );
+    const types = filterArchivablePostTypes(list.items ?? []);
+    return types.length > 0 ? types : [{ slug: "post", name: "Post" }];
+  } catch {
+    return [{ slug: "post", name: "Post" }];
+  }
+}
+
+async function fetchArchivePosts(
+  client: AuthenticatedClient,
+  postType: string,
+  page: number,
+  dbLocale: string,
+  attachmentCache: CoverImageAttachmentCache,
+): Promise<{ posts: ThemePostView[]; total: number; limit: number }> {
+  const list = await fetchJson<ApiListResponse<ApiPostRow>>(
+    client,
+    withLocaleQuery(
+      `/api/content/posts?page=${page}&limit=10&order=published_at&orderDir=desc&filter_post_type=${encodeURIComponent(postType)}&filter_status=published`,
+      dbLocale,
+    ),
+  );
+  const posts = await mapPublicListPosts(list.items ?? [], client.origin, client, attachmentCache, dbLocale);
+  return {
+    posts,
+    total: list.total ?? posts.length,
+    limit: list.limit ?? 10,
+  };
+}
+
+function applyArchiveContext(
+  base: ThemeRenderContext,
+  route: ResolvedPublicRoute,
+  archive: { postType: string; title: string },
+  posts: ThemePostView[],
+  page: number,
+  total: number,
+  limit: number,
+  origin: string,
+  siteDescription: string,
+): void {
+  base.posts = posts.length > 0 ? posts : base.posts;
+  base.have_posts = base.posts.length > 0;
+  base.route.kind = "archive";
+  base.is_archive = true;
+  base.is_front_page = false;
+  base.is_single = false;
+  base.is_page = false;
+  base.is_singular = false;
+  base.post = undefined;
+  base.archive = { title: archive.title, type: archive.postType };
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  base.pagination = {
+    page,
+    total_pages: totalPages,
+    ...(page > 1 ? { prev_url: `${route.path}?page=${page - 1}` } : {}),
+    ...(page < totalPages ? { next_url: `${route.path}?page=${page + 1}` } : {}),
+  };
+  base.seo.title = archive.title;
+  base.seo.description = siteDescription;
+  base.seo.canonical = `${origin}${route.path}`;
+}
+
 export async function buildConnectedContext(
   client: AuthenticatedClient,
   url: URL,
@@ -164,38 +236,29 @@ export async function buildConnectedContext(
     base.site.description = siteDescription;
     base.seo.site_name = siteName;
 
-    if (route.kind === "archive" || route.path.includes("/posts")) {
+    const archivableTypes = await fetchArchivablePostTypes(client);
+    const archiveRoute = resolveArchivePostTypeFromRoute(route, archivableTypes);
+
+    if (archiveRoute) {
       const page = route.page ?? 1;
-      const list = await fetchJson<ApiListResponse<ApiPostRow>>(
+      const { posts, total, limit } = await fetchArchivePosts(
         client,
-        withLocaleQuery(
-          `/api/content/posts?page=${page}&limit=10&order=published_at&orderDir=desc&filter_post_type=post&filter_status=published`,
-          dbLocale,
-        ),
-      );
-      const posts = await mapPublicListPosts(list.items ?? [], client.origin, client, attachmentCache, dbLocale);
-      base.posts = posts.length > 0 ? posts : base.posts;
-      base.have_posts = base.posts.length > 0;
-      base.route.kind = "archive";
-      base.is_archive = true;
-      base.is_front_page = false;
-      base.is_single = false;
-      base.is_page = false;
-      base.is_singular = false;
-      base.post = undefined;
-      base.archive = { title: "Blog", type: "post" };
-      const total = list.total ?? posts.length;
-      const limit = list.limit ?? 10;
-      const totalPages = Math.max(1, Math.ceil(total / limit));
-      base.pagination = {
+        archiveRoute.postType,
         page,
-        total_pages: totalPages,
-        ...(page > 1 ? { prev_url: `${route.path}?page=${page - 1}` } : {}),
-        ...(page < totalPages ? { next_url: `${route.path}?page=${page + 1}` } : {}),
-      };
-      base.seo.title = "Blog";
-      base.seo.description = siteDescription;
-      base.seo.canonical = `${client.origin}${route.path}`;
+        dbLocale,
+        attachmentCache,
+      );
+      applyArchiveContext(
+        base,
+        route,
+        archiveRoute,
+        posts,
+        page,
+        total,
+        limit,
+        client.origin,
+        siteDescription,
+      );
       return base;
     }
 
