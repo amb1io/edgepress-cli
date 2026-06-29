@@ -10,9 +10,18 @@ import {
   publicLocaleHomeUrl,
   publicLocaleUrlPrefix,
 } from "../engine/resolve-route.ts";
-import { NON_ARCHIVABLE_POST_TYPE_SLUGS } from "../engine/post-type-routes.ts";
+import { resolveCoverImageSync } from "../engine/cover-image.ts";
+import { isPublicThemeListPost } from "../engine/post-filters.ts";
+import {
+  type ArchivablePostType,
+  resolveArchivePostTypeFromRoute,
+} from "../engine/post-type-routes.ts";
 
-const DEV_ARCHIVABLE_SLUGS = new Set(["post", "eventos"]);
+const DEV_ARCHIVABLE_TYPES: ArchivablePostType[] = [
+  { slug: "post", name: "Post" },
+  { slug: "blog", name: "Blog" },
+  { slug: "eventos", name: "Eventos" },
+];
 
 function buildDevLocaleUrl(
   targetLocale: string,
@@ -55,19 +64,13 @@ function buildDevLocaleSwitcher(
 }
 
 function resolveDevArchive(route: ResolvedPublicRoute): { kind: string; postType: string; title: string } | null {
-  if (route.kind === "archive") {
-    const postType = route.postType ?? "post";
-    return { kind: "archive", postType, title: postType === "post" ? "Blog" : postType };
-  }
-  if (route.slug && DEV_ARCHIVABLE_SLUGS.has(route.slug) && !NON_ARCHIVABLE_POST_TYPE_SLUGS.has(route.slug)) {
-    const postType = route.slug;
-    return {
-      kind: "archive",
-      postType,
-      title: postType === "post" ? "Blog" : postType.charAt(0).toUpperCase() + postType.slice(1),
-    };
-  }
-  return null;
+  const resolved = resolveArchivePostTypeFromRoute(route, DEV_ARCHIVABLE_TYPES);
+  if (!resolved) return null;
+  return {
+    kind: "archive",
+    postType: resolved.postType,
+    title: resolved.postType === "post" ? "Blog" : resolved.title,
+  };
 }
 
 export function buildMockContext(
@@ -89,6 +92,11 @@ export function buildMockContext(
     kind = route.slug.includes("post") ? "single" : "page";
   }
 
+  const sampleMeta = {
+    post_thumbnail_path: "https://placehold.co/800x400?text=Cover",
+  };
+  const sampleCover = resolveCoverImageSync({ meta_values: sampleMeta, media: [] }, baseUrl);
+
   const samplePost: ThemePostView = {
     id: 1,
     title: kind === "home" ? "Bem-vindo ao Edgepress" : `Preview: ${route.slug ?? "home"}`,
@@ -99,17 +107,25 @@ export function buildMockContext(
     author_name: "Edgepress",
     published_at: Date.now(),
     post_type_slug: kind === "single" ? "post" : "page",
-    meta: {},
+    meta: Object.fromEntries(Object.entries(sampleMeta).map(([k, v]) => [k, String(v)])),
+    ...(sampleCover ? { cover_image: sampleCover } : {}),
   };
 
   const post = kind === "archive" ? undefined : samplePost;
-  const posts =
+  const rawPosts: ThemePostView[] =
     kind === "archive"
       ? [
           samplePost,
           { ...samplePost, id: 2, title: "Segundo item do arquivo", slug: "item-2" },
         ]
       : [samplePost];
+  const posts = rawPosts.filter((item) =>
+    isPublicThemeListPost({
+      status: "published",
+      post_type_slug: item.post_type_slug,
+      meta_values: item.meta,
+    }),
+  );
 
   const is_front_page = kind === "home";
   const is_single = kind === "single";
@@ -138,6 +154,7 @@ export function buildMockContext(
       canonical: `${baseUrl}${route.path || "/"}`,
       og_type: kind === "single" ? "article" : "website",
       site_name: "Edgepress Theme Dev",
+      ...(samplePost.cover_image ? { og_image: samplePost.cover_image } : {}),
     },
     menus: {
       primary: [

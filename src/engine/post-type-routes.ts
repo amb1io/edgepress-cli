@@ -2,7 +2,6 @@ import type { ResolvedPublicRoute } from "./types.ts";
 
 export const POST_TYPE_ARCHIVE_ALIASES: Record<string, string> = {
   posts: "post",
-  blog: "post",
 };
 
 export const NON_ARCHIVABLE_POST_TYPE_SLUGS = new Set([
@@ -57,4 +56,15 @@ export function buildArchivePublicPath(postType: string, localePrefix: string): 
     return `${localePrefix}/posts`;
   }
   return `${localePrefix}/${postType}`;
+}
+
+export function filterArchivablePostTypes(
+  rows: Array<{ slug?: string; name?: string }>,
+): ArchivablePostType[] {
+  return rows
+    .map((row) => ({
+      slug: String(row.slug ?? "").trim(),
+      name: String(row.name ?? row.slug ?? "").trim(),
+    }))
+    .filter((row) => row.slug !== "" && !NON_ARCHIVABLE_POST_TYPE_SLUGS.has(row.slug));
 }

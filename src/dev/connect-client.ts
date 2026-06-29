@@ -1,5 +1,9 @@
 import type { AuthenticatedClient } from "../auth/handshake.ts";
 import { fetchJson } from "../auth/handshake.ts";
+import {
+  resolveCoverImage,
+  type CoverImageAttachmentCache,
+} from "../engine/cover-image.ts";
 import { buildSeoFromPost } from "../engine/seo-head.ts";
 import type {
   ResolvedPublicRoute,
@@ -10,8 +14,14 @@ import type {
 import {
   localeToHtmlLang,
   publicLocaleHomeUrl,
+  publicLocaleToDbCode,
   publicLocaleUrlPrefix,
 } from "../engine/resolve-route.ts";
+import { filterPublicThemeListPosts } from "../engine/post-filters.ts";
+import {
+  filterArchivablePostTypes,
+  resolveArchivePostTypeFromRoute,
+} from "../engine/post-type-routes.ts";
 import { buildMockContext } from "./mock-context.ts";
 
 type ApiListResponse<T> = {
@@ -30,7 +40,10 @@ type ApiPostRow = {
   author_name?: string;
   published_at?: number | string | null;
   post_type_slug?: string;
+  post_types_slug?: string;
+  status?: string;
   meta_values?: Record<string, unknown>;
+  media?: Array<{ id?: number; meta_values?: Record<string, unknown> }>;
   seo?: { title?: string; description?: string; canonical?: string } | null;
   json_ld?: Record<string, unknown>[] | null;
 };
@@ -41,6 +54,18 @@ type SiteResponse = {
   site_url?: string;
   json_ld?: Record<string, unknown> | Record<string, unknown>[];
 };
+
+function parseAttachmentMeta(meta: unknown): Record<string, unknown> {
+  if (meta && typeof meta === "object") return meta as Record<string, unknown>;
+  if (typeof meta === "string") {
+    try {
+      return JSON.parse(meta) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
 
 function mapPost(row: ApiPostRow, baseUrl: string): ThemePostView {
   const meta: Record<string, string> = {};
@@ -68,12 +93,124 @@ function mapPost(row: ApiPostRow, baseUrl: string): ThemePostView {
   };
 }
 
+function withLocaleQuery(path: string, dbLocale: string): string {
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}locale=${encodeURIComponent(dbLocale)}`;
+}
+
+async function enrichApiPost(
+  row: ApiPostRow,
+  baseUrl: string,
+  client: AuthenticatedClient,
+  cache: CoverImageAttachmentCache,
+  dbLocale: string,
+): Promise<ThemePostView> {
+  const view = mapPost(row, baseUrl);
+  const cover = await resolveCoverImage(
+    { meta_values: row.meta_values, media: row.media },
+    baseUrl,
+    cache,
+    async (id) => {
+      const attachment = await fetchJson<ApiPostRow>(
+        client,
+        withLocaleQuery(`/api/content/posts/${id}`, dbLocale),
+      ).catch(() => null);
+      if (!attachment) return null;
+      return parseAttachmentMeta(attachment.meta_values);
+    },
+  );
+  return cover ? { ...view, cover_image: cover } : view;
+}
+
+async function mapPublicListPosts(
+  rows: ApiPostRow[],
+  baseUrl: string,
+  client: AuthenticatedClient,
+  cache: CoverImageAttachmentCache,
+  dbLocale: string,
+): Promise<ThemePostView[]> {
+  const normalized = rows.map((row) => ({
+    ...row,
+    status: row.status ?? "published",
+  }));
+  const filtered = filterPublicThemeListPosts(normalized);
+  return Promise.all(filtered.map((row) => enrichApiPost(row, baseUrl, client, cache, dbLocale)));
+}
+
 function inferRouteKind(route: ResolvedPublicRoute, post?: ThemePostView): ThemeRenderContext["route"]["kind"] {
   if (route.kind === "home") return "home";
   if (route.kind === "archive") return "archive";
   if (route.kind === "404") return "404";
   if (post?.post_type_slug === "post") return "single";
   return "page";
+}
+
+async function fetchArchivablePostTypes(client: AuthenticatedClient) {
+  try {
+    const list = await fetchJson<ApiListResponse<{ slug?: string; name?: string }>>(
+      client,
+      "/api/content/post_types?limit=100",
+    );
+    const types = filterArchivablePostTypes(list.items ?? []);
+    return types.length > 0 ? types : [{ slug: "post", name: "Post" }];
+  } catch {
+    return [{ slug: "post", name: "Post" }];
+  }
+}
+
+async function fetchArchivePosts(
+  client: AuthenticatedClient,
+  postType: string,
+  page: number,
+  dbLocale: string,
+  attachmentCache: CoverImageAttachmentCache,
+): Promise<{ posts: ThemePostView[]; total: number; limit: number }> {
+  const list = await fetchJson<ApiListResponse<ApiPostRow>>(
+    client,
+    withLocaleQuery(
+      `/api/content/posts?page=${page}&limit=10&order=published_at&orderDir=desc&filter_post_type=${encodeURIComponent(postType)}&filter_status=published`,
+      dbLocale,
+    ),
+  );
+  const posts = await mapPublicListPosts(list.items ?? [], client.origin, client, attachmentCache, dbLocale);
+  return {
+    posts,
+    total: list.total ?? posts.length,
+    limit: list.limit ?? 10,
+  };
+}
+
+function applyArchiveContext(
+  base: ThemeRenderContext,
+  route: ResolvedPublicRoute,
+  archive: { postType: string; title: string },
+  posts: ThemePostView[],
+  page: number,
+  total: number,
+  limit: number,
+  origin: string,
+  siteDescription: string,
+): void {
+  base.posts = posts.length > 0 ? posts : base.posts;
+  base.have_posts = base.posts.length > 0;
+  base.route.kind = "archive";
+  base.is_archive = true;
+  base.is_front_page = false;
+  base.is_single = false;
+  base.is_page = false;
+  base.is_singular = false;
+  base.post = undefined;
+  base.archive = { title: archive.title, type: archive.postType };
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  base.pagination = {
+    page,
+    total_pages: totalPages,
+    ...(page > 1 ? { prev_url: `${route.path}?page=${page - 1}` } : {}),
+    ...(page < totalPages ? { next_url: `${route.path}?page=${page + 1}` } : {}),
+  };
+  base.seo.title = archive.title;
+  base.seo.description = siteDescription;
+  base.seo.canonical = `${origin}${route.path}`;
 }
 
 export async function buildConnectedContext(
@@ -83,6 +220,8 @@ export async function buildConnectedContext(
   pkg: ThemePackageRecord,
 ): Promise<ThemeRenderContext> {
   const base = buildMockContext(url, route, pkg);
+  const attachmentCache: CoverImageAttachmentCache = new Map();
+  const dbLocale = publicLocaleToDbCode(route.locale);
 
   try {
     const [site, settings] = await Promise.all([
@@ -97,41 +236,38 @@ export async function buildConnectedContext(
     base.site.description = siteDescription;
     base.seo.site_name = siteName;
 
-    if (route.kind === "archive" || route.path.includes("/posts")) {
+    const archivableTypes = await fetchArchivablePostTypes(client);
+    const archiveRoute = resolveArchivePostTypeFromRoute(route, archivableTypes);
+
+    if (archiveRoute) {
       const page = route.page ?? 1;
-      const list = await fetchJson<ApiListResponse<ApiPostRow>>(
+      const { posts, total, limit } = await fetchArchivePosts(
         client,
-        `/api/content/posts?page=${page}&limit=10&order=published_at&orderDir=desc`,
-      );
-      const posts = (list.items ?? []).map((row) => mapPost(row, client.origin));
-      base.posts = posts.length > 0 ? posts : base.posts;
-      base.have_posts = base.posts.length > 0;
-      base.route.kind = "archive";
-      base.is_archive = true;
-      base.is_front_page = false;
-      base.is_single = false;
-      base.is_page = false;
-      base.is_singular = false;
-      base.post = undefined;
-      base.archive = { title: "Blog", type: "post" };
-      const total = list.total ?? posts.length;
-      const limit = list.limit ?? 10;
-      const totalPages = Math.max(1, Math.ceil(total / limit));
-      base.pagination = {
+        archiveRoute.postType,
         page,
-        total_pages: totalPages,
-        ...(page > 1 ? { prev_url: `${route.path}?page=${page - 1}` } : {}),
-        ...(page < totalPages ? { next_url: `${route.path}?page=${page + 1}` } : {}),
-      };
-      base.seo.title = "Blog";
-      base.seo.description = siteDescription;
-      base.seo.canonical = `${client.origin}${route.path}`;
+        dbLocale,
+        attachmentCache,
+      );
+      applyArchiveContext(
+        base,
+        route,
+        archiveRoute,
+        posts,
+        page,
+        total,
+        limit,
+        client.origin,
+        siteDescription,
+      );
       return base;
     }
 
     if (route.slug && route.kind !== "home") {
-      const detail = await fetchJson<ApiPostRow>(client, `/api/content/${encodeURIComponent(route.slug)}`);
-      const post = mapPost(detail, client.origin);
+      const detail = await fetchJson<ApiPostRow>(
+        client,
+        withLocaleQuery(`/api/content/${encodeURIComponent(route.slug)}`, dbLocale),
+      );
+      const post = await enrichApiPost(detail, client.origin, client, attachmentCache, dbLocale);
       const kind = inferRouteKind(route, post);
 
       base.post = post;
@@ -157,6 +293,7 @@ export async function buildConnectedContext(
         fallbackTitle: siteName,
         canonicalUrl: `${client.origin}${route.path}`,
         siteName,
+        ogImage: post.cover_image,
       });
       return base;
     }
@@ -164,9 +301,12 @@ export async function buildConnectedContext(
     if (route.kind === "home") {
       const list = await fetchJson<ApiListResponse<ApiPostRow>>(
         client,
-        "/api/content/posts?limit=10&order=published_at&orderDir=desc",
+        withLocaleQuery(
+          "/api/content/posts?limit=10&order=published_at&orderDir=desc&filter_post_type=post&filter_status=published",
+          dbLocale,
+        ),
       );
-      const posts = (list.items ?? []).map((row) => mapPost(row, client.origin));
+      const posts = await mapPublicListPosts(list.items ?? [], client.origin, client, attachmentCache, dbLocale);
       if (posts.length > 0) {
         base.posts = posts;
         base.post = posts[0];
@@ -175,6 +315,9 @@ export async function buildConnectedContext(
       base.seo.title = siteName;
       base.seo.description = siteDescription;
       base.seo.canonical = `${client.origin}${publicLocaleHomeUrl(route.locale)}`;
+      if (posts[0]?.cover_image) {
+        base.seo.og_image = posts[0].cover_image;
+      }
       if (site.json_ld) {
         const jsonLd = Array.isArray(site.json_ld) ? site.json_ld : [site.json_ld];
         base.seo.json_ld_html = `<script type="application/ld+json">${JSON.stringify(jsonLd.length === 1 ? jsonLd[0] : jsonLd)}</script>`;
