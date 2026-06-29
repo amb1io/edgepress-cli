@@ -12,6 +12,7 @@ import {
   publicLocaleHomeUrl,
   publicLocaleUrlPrefix,
 } from "../engine/resolve-route.ts";
+import { filterPublicThemeListPosts } from "../engine/post-filters.ts";
 import { buildMockContext } from "./mock-context.ts";
 
 type ApiListResponse<T> = {
@@ -30,6 +31,8 @@ type ApiPostRow = {
   author_name?: string;
   published_at?: number | string | null;
   post_type_slug?: string;
+  post_types_slug?: string;
+  status?: string;
   meta_values?: Record<string, unknown>;
   seo?: { title?: string; description?: string; canonical?: string } | null;
   json_ld?: Record<string, unknown>[] | null;
@@ -68,6 +71,14 @@ function mapPost(row: ApiPostRow, baseUrl: string): ThemePostView {
   };
 }
 
+function mapPublicListPosts(rows: ApiPostRow[], baseUrl: string): ThemePostView[] {
+  const normalized = rows.map((row) => ({
+    ...row,
+    status: row.status ?? "published",
+  }));
+  return filterPublicThemeListPosts(normalized).map((row) => mapPost(row, baseUrl));
+}
+
 function inferRouteKind(route: ResolvedPublicRoute, post?: ThemePostView): ThemeRenderContext["route"]["kind"] {
   if (route.kind === "home") return "home";
   if (route.kind === "archive") return "archive";
@@ -101,9 +112,9 @@ export async function buildConnectedContext(
       const page = route.page ?? 1;
       const list = await fetchJson<ApiListResponse<ApiPostRow>>(
         client,
-        `/api/content/posts?page=${page}&limit=10&order=published_at&orderDir=desc`,
+        `/api/content/posts?page=${page}&limit=10&order=published_at&orderDir=desc&filter_post_type=post&filter_status=published`,
       );
-      const posts = (list.items ?? []).map((row) => mapPost(row, client.origin));
+      const posts = mapPublicListPosts(list.items ?? [], client.origin);
       base.posts = posts.length > 0 ? posts : base.posts;
       base.have_posts = base.posts.length > 0;
       base.route.kind = "archive";
@@ -164,9 +175,9 @@ export async function buildConnectedContext(
     if (route.kind === "home") {
       const list = await fetchJson<ApiListResponse<ApiPostRow>>(
         client,
-        "/api/content/posts?limit=10&order=published_at&orderDir=desc",
+        "/api/content/posts?limit=10&order=published_at&orderDir=desc&filter_post_type=post&filter_status=published",
       );
-      const posts = (list.items ?? []).map((row) => mapPost(row, client.origin));
+      const posts = mapPublicListPosts(list.items ?? [], client.origin);
       if (posts.length > 0) {
         base.posts = posts;
         base.post = posts[0];

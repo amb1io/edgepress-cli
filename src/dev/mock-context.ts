@@ -10,6 +10,7 @@ import {
   publicLocaleHomeUrl,
   publicLocaleUrlPrefix,
 } from "../engine/resolve-route.ts";
+import { isPublicThemeListPost } from "../engine/post-filters.ts";
 import { NON_ARCHIVABLE_POST_TYPE_SLUGS } from "../engine/post-type-routes.ts";
 
 const DEV_ARCHIVABLE_SLUGS = new Set(["post", "eventos"]);
@@ -103,13 +104,20 @@ export function buildMockContext(
   };
 
   const post = kind === "archive" ? undefined : samplePost;
-  const posts =
+  const rawPosts: ThemePostView[] =
     kind === "archive"
       ? [
           samplePost,
           { ...samplePost, id: 2, title: "Segundo item do arquivo", slug: "item-2" },
         ]
       : [samplePost];
+  const posts = rawPosts.filter((item) =>
+    isPublicThemeListPost({
+      status: "published",
+      post_type_slug: item.post_type_slug,
+      meta_values: item.meta,
+    }),
+  );
 
   const is_front_page = kind === "home";
   const is_single = kind === "single";
