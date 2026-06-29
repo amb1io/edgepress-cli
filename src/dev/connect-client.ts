@@ -1,5 +1,9 @@
 import type { AuthenticatedClient } from "../auth/handshake.ts";
 import { fetchJson } from "../auth/handshake.ts";
+import {
+  resolveCoverImage,
+  type CoverImageAttachmentCache,
+} from "../engine/cover-image.ts";
 import { buildSeoFromPost } from "../engine/seo-head.ts";
 import type {
   ResolvedPublicRoute,
@@ -10,6 +14,7 @@ import type {
 import {
   localeToHtmlLang,
   publicLocaleHomeUrl,
+  publicLocaleToDbCode,
   publicLocaleUrlPrefix,
 } from "../engine/resolve-route.ts";
 import { filterPublicThemeListPosts } from "../engine/post-filters.ts";
@@ -34,6 +39,7 @@ type ApiPostRow = {
   post_types_slug?: string;
   status?: string;
   meta_values?: Record<string, unknown>;
+  media?: Array<{ id?: number; meta_values?: Record<string, unknown> }>;
   seo?: { title?: string; description?: string; canonical?: string } | null;
   json_ld?: Record<string, unknown>[] | null;
 };
@@ -44,6 +50,18 @@ type SiteResponse = {
   site_url?: string;
   json_ld?: Record<string, unknown> | Record<string, unknown>[];
 };
+
+function parseAttachmentMeta(meta: unknown): Record<string, unknown> {
+  if (meta && typeof meta === "object") return meta as Record<string, unknown>;
+  if (typeof meta === "string") {
+    try {
+      return JSON.parse(meta) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
 
 function mapPost(row: ApiPostRow, baseUrl: string): ThemePostView {
   const meta: Record<string, string> = {};
@@ -71,12 +89,48 @@ function mapPost(row: ApiPostRow, baseUrl: string): ThemePostView {
   };
 }
 
-function mapPublicListPosts(rows: ApiPostRow[], baseUrl: string): ThemePostView[] {
+function withLocaleQuery(path: string, dbLocale: string): string {
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}locale=${encodeURIComponent(dbLocale)}`;
+}
+
+async function enrichApiPost(
+  row: ApiPostRow,
+  baseUrl: string,
+  client: AuthenticatedClient,
+  cache: CoverImageAttachmentCache,
+  dbLocale: string,
+): Promise<ThemePostView> {
+  const view = mapPost(row, baseUrl);
+  const cover = await resolveCoverImage(
+    { meta_values: row.meta_values, media: row.media },
+    baseUrl,
+    cache,
+    async (id) => {
+      const attachment = await fetchJson<ApiPostRow>(
+        client,
+        withLocaleQuery(`/api/content/posts/${id}`, dbLocale),
+      ).catch(() => null);
+      if (!attachment) return null;
+      return parseAttachmentMeta(attachment.meta_values);
+    },
+  );
+  return cover ? { ...view, cover_image: cover } : view;
+}
+
+async function mapPublicListPosts(
+  rows: ApiPostRow[],
+  baseUrl: string,
+  client: AuthenticatedClient,
+  cache: CoverImageAttachmentCache,
+  dbLocale: string,
+): Promise<ThemePostView[]> {
   const normalized = rows.map((row) => ({
     ...row,
     status: row.status ?? "published",
   }));
-  return filterPublicThemeListPosts(normalized).map((row) => mapPost(row, baseUrl));
+  const filtered = filterPublicThemeListPosts(normalized);
+  return Promise.all(filtered.map((row) => enrichApiPost(row, baseUrl, client, cache, dbLocale)));
 }
 
 function inferRouteKind(route: ResolvedPublicRoute, post?: ThemePostView): ThemeRenderContext["route"]["kind"] {
@@ -94,6 +148,8 @@ export async function buildConnectedContext(
   pkg: ThemePackageRecord,
 ): Promise<ThemeRenderContext> {
   const base = buildMockContext(url, route, pkg);
+  const attachmentCache: CoverImageAttachmentCache = new Map();
+  const dbLocale = publicLocaleToDbCode(route.locale);
 
   try {
     const [site, settings] = await Promise.all([
@@ -112,9 +168,12 @@ export async function buildConnectedContext(
       const page = route.page ?? 1;
       const list = await fetchJson<ApiListResponse<ApiPostRow>>(
         client,
-        `/api/content/posts?page=${page}&limit=10&order=published_at&orderDir=desc&filter_post_type=post&filter_status=published`,
+        withLocaleQuery(
+          `/api/content/posts?page=${page}&limit=10&order=published_at&orderDir=desc&filter_post_type=post&filter_status=published`,
+          dbLocale,
+        ),
       );
-      const posts = mapPublicListPosts(list.items ?? [], client.origin);
+      const posts = await mapPublicListPosts(list.items ?? [], client.origin, client, attachmentCache, dbLocale);
       base.posts = posts.length > 0 ? posts : base.posts;
       base.have_posts = base.posts.length > 0;
       base.route.kind = "archive";
@@ -141,8 +200,11 @@ export async function buildConnectedContext(
     }
 
     if (route.slug && route.kind !== "home") {
-      const detail = await fetchJson<ApiPostRow>(client, `/api/content/${encodeURIComponent(route.slug)}`);
-      const post = mapPost(detail, client.origin);
+      const detail = await fetchJson<ApiPostRow>(
+        client,
+        withLocaleQuery(`/api/content/${encodeURIComponent(route.slug)}`, dbLocale),
+      );
+      const post = await enrichApiPost(detail, client.origin, client, attachmentCache, dbLocale);
       const kind = inferRouteKind(route, post);
 
       base.post = post;
@@ -168,6 +230,7 @@ export async function buildConnectedContext(
         fallbackTitle: siteName,
         canonicalUrl: `${client.origin}${route.path}`,
         siteName,
+        ogImage: post.cover_image,
       });
       return base;
     }
@@ -175,9 +238,12 @@ export async function buildConnectedContext(
     if (route.kind === "home") {
       const list = await fetchJson<ApiListResponse<ApiPostRow>>(
         client,
-        "/api/content/posts?limit=10&order=published_at&orderDir=desc&filter_post_type=post&filter_status=published",
+        withLocaleQuery(
+          "/api/content/posts?limit=10&order=published_at&orderDir=desc&filter_post_type=post&filter_status=published",
+          dbLocale,
+        ),
       );
-      const posts = mapPublicListPosts(list.items ?? [], client.origin);
+      const posts = await mapPublicListPosts(list.items ?? [], client.origin, client, attachmentCache, dbLocale);
       if (posts.length > 0) {
         base.posts = posts;
         base.post = posts[0];
@@ -186,6 +252,9 @@ export async function buildConnectedContext(
       base.seo.title = siteName;
       base.seo.description = siteDescription;
       base.seo.canonical = `${client.origin}${publicLocaleHomeUrl(route.locale)}`;
+      if (posts[0]?.cover_image) {
+        base.seo.og_image = posts[0].cover_image;
+      }
       if (site.json_ld) {
         const jsonLd = Array.isArray(site.json_ld) ? site.json_ld : [site.json_ld];
         base.seo.json_ld_html = `<script type="application/ld+json">${JSON.stringify(jsonLd.length === 1 ? jsonLd[0] : jsonLd)}</script>`;

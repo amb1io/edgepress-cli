@@ -31,6 +31,15 @@ export function publicLocaleHomeUrl(locale: string): string {
   return prefix || "/";
 }
 
+/** Maps public theme locale to Edgepress DB locale code for API query params. */
+export function publicLocaleToDbCode(locale: string): string {
+  const n = normalizePublicLocale(locale);
+  if (n === "pt-br") return "pt_BR";
+  if (n === "en") return "en_US";
+  if (n === "es") return "es_ES";
+  return "en_US";
+}
+
 function isValidSlug(slug: string): boolean {
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug);
 }

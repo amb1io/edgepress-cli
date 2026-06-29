@@ -10,6 +10,7 @@ import {
   publicLocaleHomeUrl,
   publicLocaleUrlPrefix,
 } from "../engine/resolve-route.ts";
+import { resolveCoverImageSync } from "../engine/cover-image.ts";
 import { isPublicThemeListPost } from "../engine/post-filters.ts";
 import { NON_ARCHIVABLE_POST_TYPE_SLUGS } from "../engine/post-type-routes.ts";
 
@@ -90,6 +91,11 @@ export function buildMockContext(
     kind = route.slug.includes("post") ? "single" : "page";
   }
 
+  const sampleMeta = {
+    post_thumbnail_path: "https://placehold.co/800x400?text=Cover",
+  };
+  const sampleCover = resolveCoverImageSync({ meta_values: sampleMeta, media: [] }, baseUrl);
+
   const samplePost: ThemePostView = {
     id: 1,
     title: kind === "home" ? "Bem-vindo ao Edgepress" : `Preview: ${route.slug ?? "home"}`,
@@ -100,7 +106,8 @@ export function buildMockContext(
     author_name: "Edgepress",
     published_at: Date.now(),
     post_type_slug: kind === "single" ? "post" : "page",
-    meta: {},
+    meta: Object.fromEntries(Object.entries(sampleMeta).map(([k, v]) => [k, String(v)])),
+    ...(sampleCover ? { cover_image: sampleCover } : {}),
   };
 
   const post = kind === "archive" ? undefined : samplePost;
@@ -146,6 +153,7 @@ export function buildMockContext(
       canonical: `${baseUrl}${route.path || "/"}`,
       og_type: kind === "single" ? "article" : "website",
       site_name: "Edgepress Theme Dev",
+      ...(samplePost.cover_image ? { og_image: samplePost.cover_image } : {}),
     },
     menus: {
       primary: [
