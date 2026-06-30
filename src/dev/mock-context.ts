@@ -1,5 +1,4 @@
 import type {
-  LocaleSwitcherItem,
   ResolvedPublicRoute,
   ThemePackageRecord,
   ThemePostView,
@@ -16,52 +15,13 @@ import {
   type ArchivablePostType,
   resolveArchivePostTypeFromRoute,
 } from "../engine/post-type-routes.ts";
+import { buildLocaleSwitcher } from "../engine/locale-switcher.ts";
 
 const DEV_ARCHIVABLE_TYPES: ArchivablePostType[] = [
   { slug: "post", name: "Post" },
   { slug: "blog", name: "Blog" },
   { slug: "eventos", name: "Eventos" },
 ];
-
-function buildDevLocaleUrl(
-  targetLocale: string,
-  route: ResolvedPublicRoute,
-  kind: string,
-  archivePostType?: string,
-): string {
-  const prefix = publicLocaleUrlPrefix(targetLocale);
-  if (kind === "archive") {
-    if (archivePostType === "post") return `${prefix}/posts`;
-    return `${prefix}/${archivePostType ?? "posts"}`;
-  }
-  if (route.slug) {
-    return `${prefix}/${route.slug}`;
-  }
-  return publicLocaleHomeUrl(targetLocale);
-}
-
-function buildDevLocaleSwitcher(
-  route: ResolvedPublicRoute,
-  kind: string,
-  archivePostType?: string,
-): LocaleSwitcherItem[] {
-  return [
-    {
-      code: "pt-br",
-      flag: "🇧🇷",
-      label: "PT",
-      url: buildDevLocaleUrl("pt-br", route, kind, archivePostType),
-      active: route.locale === "pt-br",
-    },
-    {
-      code: "en",
-      flag: "🇺🇸",
-      label: "EN",
-      url: buildDevLocaleUrl("en", route, kind, archivePostType),
-      active: route.locale === "en",
-    },
-  ];
-}
 
 function resolveDevArchive(route: ResolvedPublicRoute): { kind: string; postType: string; title: string } | null {
   const resolved = resolveArchivePostTypeFromRoute(route, DEV_ARCHIVABLE_TYPES);
@@ -170,7 +130,12 @@ export function buildMockContext(
     },
     route: { kind: kind as ThemeRenderContext["route"]["kind"], path: route.path, locale },
     body_class: `route-${kind} locale-${locale.replace(/-/g, "_")}`,
-    locale_switcher: buildDevLocaleSwitcher(route, kind, archivePostType),
+    locale_switcher: buildLocaleSwitcher(
+      route.locale,
+      route,
+      kind as ThemeRenderContext["route"]["kind"],
+      archivePostType,
+    ),
     ...(post ? { post } : {}),
     posts,
     archive: { title: archiveTitle, type: archiveType },
