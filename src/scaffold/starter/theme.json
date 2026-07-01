@@ -3,7 +3,7 @@
   "slug": "edgepress-starter",
   "version": "1.0.0",
   "engine": "liquid",
-  "supports": ["home", "single", "page", "archive"],
+  "supports": ["home", "single", "page", "archive", "search"],
   "home_list_posts": true,
   "layout": "layouts/base",
   "templates": {
@@ -11,6 +11,7 @@
     "single": "single",
     "page": "page",
     "archive": "archive",
+    "search": "search",
     "404": "404"
   },
   "assets_dir": "assets"

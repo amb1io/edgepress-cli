@@ -31,4 +31,10 @@ describe("resolve-template", () => {
       "index",
     ]);
   });
+
+  it("builds search template candidates", () => {
+    expect(buildTemplateCandidates("search")).toEqual(["search", "archive", "index"]);
+    const templates = { ...baseTemplates, search: "<div>search</div>" };
+    expect(resolveTemplateKey("search", templates)).toBe("search");
+  });
 });

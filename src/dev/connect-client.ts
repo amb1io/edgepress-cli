@@ -19,7 +19,13 @@ import {
   publicLocaleToDbCode,
   publicLocaleUrlPrefix,
 } from "../engine/resolve-route.ts";
-import { filterPublicThemeListPosts } from "../engine/post-filters.ts";
+import { filterPublicThemeListPosts, isMenuLocationContainer } from "../engine/post-filters.ts";
+import {
+  buildThemeMenusRecord,
+  menuChildPostToLinkItem,
+  menuOrderFromMeta,
+  parsePostMetaValues,
+} from "../engine/menu-items-url.ts";
 import {
   filterArchivablePostTypes,
   resolveArchivePostTypeFromRoute,
@@ -59,6 +65,7 @@ type ApiPostRow = {
   post_type_slug?: string;
   post_types_slug?: string;
   status?: string;
+  parent_id?: number | null;
   meta_values?: Record<string, unknown>;
   media?: Array<{ id?: number; meta_values?: Record<string, unknown> }>;
   seo?: { title?: string; description?: string; canonical?: string } | null;
@@ -120,32 +127,6 @@ function withLocaleQuery(path: string, dbLocale: string): string {
   return `${path}${sep}locale=${encodeURIComponent(dbLocale)}`;
 }
 
-function normalizeTitle(value: unknown): string {
-  return String(value ?? "").trim().toLowerCase();
-}
-
-function getMenuItemsFromPost(
-  post: { custom_fields?: CustomFieldItem[] },
-  customFieldTitle: string,
-  currentPath: string,
-): MenuItem[] {
-  const blocks = Array.isArray(post.custom_fields) ? post.custom_fields : [];
-  const block = blocks.find((item) => normalizeTitle(item?.title) === normalizeTitle(customFieldTitle));
-  const rows = Array.isArray(block?.fields) ? block!.fields! : [];
-
-  return rows
-    .map((row) => {
-      const label = String(row?.name ?? "").trim();
-      const url = String(row?.value ?? "").trim();
-      return {
-        label,
-        url,
-        active: url !== "" && currentPath === url.replace(/\/+$/, ""),
-      };
-    })
-    .filter((item) => item.label !== "" && item.url !== "");
-}
-
 function buildBodyClass(
   route: ResolvedPublicRoute,
   post?: ThemePostView,
@@ -168,6 +149,18 @@ function buildArchivePageUrl(pathname: string, page: number): string {
   } else {
     url.searchParams.set("page", String(page));
   }
+  const qs = url.searchParams.toString();
+  return `${url.pathname}${qs ? `?${qs}` : ""}`;
+}
+
+function buildSearchPageUrl(pathname: string, q: string, page: number, postType?: string): string {
+  const url = new URL(pathname, "http://localhost");
+  if (q) url.searchParams.set("q", q);
+  else url.searchParams.delete("q");
+  if (postType) url.searchParams.set("post_type", postType);
+  else url.searchParams.delete("post_type");
+  if (page <= 1) url.searchParams.delete("page");
+  else url.searchParams.set("page", String(page));
   const qs = url.searchParams.toString();
   return `${url.pathname}${qs ? `?${qs}` : ""}`;
 }
@@ -282,6 +275,7 @@ function applyArchiveContext(
   base.have_posts = base.posts.length > 0;
   base.route.kind = "archive";
   base.is_archive = true;
+  base.is_search = false;
   base.is_front_page = false;
   base.is_single = false;
   base.is_page = false;
@@ -380,6 +374,7 @@ function applyTaxonomyContext(
   base.route.taxonomy_type = route.taxonomyType;
   base.route.taxonomy_slug = route.taxonomySlug;
   base.is_archive = true;
+  base.is_search = false;
   base.is_front_page = false;
   base.is_single = false;
   base.is_page = false;
@@ -415,6 +410,7 @@ function applyTaxonomyContext(
 function applyNotFoundContext(base: ThemeRenderContext, route: ResolvedPublicRoute, origin: string): void {
   base.route.kind = "404";
   base.is_404 = true;
+  base.is_search = false;
   base.is_archive = false;
   base.is_front_page = false;
   base.is_single = false;
@@ -438,6 +434,115 @@ function applyNotFoundContext(base: ThemeRenderContext, route: ResolvedPublicRou
   base.locale_switcher = buildLocaleSwitcher(route.locale, route, "404");
 }
 
+async function fetchSearchResults(
+  client: AuthenticatedClient,
+  q: string,
+  page: number,
+  dbLocale: string,
+  attachmentCache: CoverImageAttachmentCache,
+  postType?: string,
+): Promise<{
+  posts: ThemePostView[];
+  total: number;
+  limit: number;
+  totalPages: number;
+  page: number;
+}> {
+  const trimmed = q.trim();
+  if (!trimmed) {
+    return { posts: [], total: 0, limit: 20, totalPages: 0, page: 1 };
+  }
+
+  const params = new URLSearchParams({
+    q: trimmed,
+    locale: dbLocale,
+    page: String(page),
+    limit: "20",
+  });
+  if (postType) params.set("post_type", postType);
+
+  const data = await fetchJson<{
+    items?: ApiPostRow[];
+    total?: number;
+    page?: number;
+    limit?: number;
+    totalPages?: number;
+  }>(client, `/api/search?${params.toString()}`);
+
+  const posts = await mapPublicListPosts(
+    data.items ?? [],
+    client.origin,
+    client,
+    attachmentCache,
+    dbLocale,
+  );
+
+  return {
+    posts,
+    total: data.total ?? posts.length,
+    limit: data.limit ?? 20,
+    totalPages: data.totalPages ?? 0,
+    page: data.page ?? page,
+  };
+}
+
+function applySearchContext(
+  base: ThemeRenderContext,
+  route: ResolvedPublicRoute,
+  q: string,
+  posts: ThemePostView[],
+  page: number,
+  total: number,
+  limit: number,
+  totalPages: number,
+  origin: string,
+  siteName: string,
+  siteDescription: string,
+  postType?: string,
+): void {
+  const archiveTitle = q ? `Busca: ${q}` : "Busca";
+  base.posts = posts;
+  base.have_posts = posts.length > 0;
+  base.route.kind = "search";
+  base.is_search = true;
+  base.is_archive = false;
+  base.is_front_page = false;
+  base.is_single = false;
+  base.is_page = false;
+  base.is_singular = false;
+  base.is_404 = false;
+  base.post = undefined;
+  base.search = { query: q, total };
+  base.archive = { title: archiveTitle, type: "search" };
+  const pages = Math.max(1, totalPages || 1);
+  base.pagination = {
+    page,
+    total_pages: pages,
+    ...(page > 1 && totalPages > 0
+      ? { prev_url: buildSearchPageUrl(route.path, q, page - 1, postType) }
+      : {}),
+    ...(page < totalPages
+      ? { next_url: buildSearchPageUrl(route.path, q, page + 1, postType) }
+      : {}),
+  };
+  const canonicalUrl = new URL(
+    buildSearchPageUrl(route.path, q, page, postType),
+    origin,
+  ).href;
+  base.seo = resolveThemeSeoContext({
+    resolvedKind: "search",
+    isArchiveRoute: true,
+    archiveTitle,
+    homeListPosts: false,
+    siteName,
+    siteDescription,
+    canonicalUrl,
+    ...(posts[0]?.cover_image ? { ogImage: posts[0].cover_image } : {}),
+  });
+  base.body_class = buildBodyClass(route, undefined, "search");
+  base.locale_switcher = buildLocaleSwitcher(route.locale, route, "search");
+}
+
 type ApiTaxonomyRow = {
   id?: number;
   name?: string;
@@ -446,11 +551,11 @@ type ApiTaxonomyRow = {
   parent_id?: number | null;
 };
 
-async function fetchPrimaryMenus(
+async function fetchMenusByLocation(
   client: AuthenticatedClient,
   dbLocale: string,
   currentPath: string,
-): Promise<MenuItem[]> {
+): Promise<Record<string, MenuItem[]>> {
   try {
     const list = await fetchJson<ApiListResponse<ApiPostRow>>(
       client,
@@ -459,21 +564,57 @@ async function fetchPrimaryMenus(
         dbLocale,
       ),
     );
-    const items: MenuItem[] = [];
+
+    const parents: ApiPostRow[] = [];
+    const children: ApiPostRow[] = [];
+
     for (const row of list.items ?? []) {
-      let menuPost = row;
-      if (!Array.isArray(menuPost.custom_fields) && row.id != null) {
-        menuPost =
-          (await fetchJson<ApiPostRow>(
-            client,
-            withLocaleQuery(`/api/content/posts/${row.id}`, dbLocale),
-          ).catch(() => row)) ?? row;
+      const parentId = row.parent_id;
+      if (parentId == null || parentId === 0) {
+        if (isMenuLocationContainer(row)) {
+          parents.push(row);
+        }
+      } else {
+        children.push(row);
       }
-      items.push(...getMenuItemsFromPost(menuPost, "menu navigation", currentPath));
     }
-    return items;
+
+    const slugByParentId = new Map<number, string>();
+    for (const parent of parents) {
+      if (parent.id != null) {
+        slugByParentId.set(parent.id, String(parent.slug ?? "").trim());
+      }
+    }
+
+    const byLocation: Record<string, Array<{ label: string; url: string; order: number }>> = {};
+
+    for (const row of children) {
+      const parentId = row.parent_id;
+      if (parentId == null) continue;
+      const location = slugByParentId.get(parentId);
+      if (!location) continue;
+
+      const meta = parsePostMetaValues(row.meta_values);
+      const item = menuChildPostToLinkItem(row, dbLocale);
+      if (!item) continue;
+
+      if (!byLocation[location]) byLocation[location] = [];
+      byLocation[location].push({
+        ...item,
+        order: menuOrderFromMeta(meta),
+      });
+    }
+
+    const menusByLocation: Record<string, { label: string; url: string }[]> = {};
+    for (const [location, items] of Object.entries(byLocation)) {
+      menusByLocation[location] = items
+        .sort((a, b) => a.order - b.order)
+        .map(({ label, url }) => ({ label, url }));
+    }
+
+    return buildThemeMenusRecord(menusByLocation, currentPath);
   } catch {
-    return [];
+    return {};
   }
 }
 
@@ -690,12 +831,41 @@ export async function buildConnectedContext(
     base.site.title = siteName;
     base.site.description = siteDescription;
 
-    const [archivableTypes, menuItems] = await Promise.all([
+    const [archivableTypes, menus] = await Promise.all([
       fetchArchivablePostTypes(client),
-      fetchPrimaryMenus(client, dbLocale, route.path),
+      fetchMenusByLocation(client, dbLocale, route.path),
     ]);
-    if (menuItems.length > 0) {
-      base.menus.primary = menuItems;
+    if (Object.keys(menus).length > 0) {
+      base.menus = { ...base.menus, ...menus };
+    }
+
+    if (route.kind === "search") {
+      const q = route.searchQuery ?? "";
+      const page = route.page ?? 1;
+      const postType = url.searchParams.get("post_type")?.trim() || undefined;
+      const { posts, total, limit, totalPages } = await fetchSearchResults(
+        client,
+        q,
+        page,
+        dbLocale,
+        attachmentCache,
+        postType,
+      );
+      applySearchContext(
+        base,
+        route,
+        q,
+        posts,
+        page,
+        total,
+        limit,
+        totalPages,
+        client.origin,
+        siteName,
+        siteDescription,
+        postType,
+      );
+      return base;
     }
 
     if (route.kind === "taxonomy" && route.taxonomyType && route.taxonomySlug) {
@@ -770,6 +940,7 @@ export async function buildConnectedContext(
       base.is_page = kind === "page";
       base.is_singular = kind === "single" || kind === "page";
       base.is_archive = false;
+      base.is_search = false;
       base.is_404 = false;
       base.have_posts = true;
 

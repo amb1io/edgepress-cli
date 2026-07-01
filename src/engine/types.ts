@@ -1,4 +1,4 @@
-export type ThemeRouteKind = "home" | "single" | "page" | "archive" | "taxonomy" | "404";
+export type ThemeRouteKind = "home" | "single" | "page" | "archive" | "taxonomy" | "search" | "404";
 
 export type ThemeManifest = {
   name: string;
@@ -118,7 +118,12 @@ export type ThemeRenderContext = {
   is_page: boolean;
   is_singular: boolean;
   is_archive: boolean;
+  is_search: boolean;
   is_404: boolean;
+  search?: {
+    query: string;
+    total: number;
+  };
   have_posts: boolean;
   /** Fetch taxonomy terms for a post type (used by {% get_taxonomies %} tag). */
   get_taxonomies?: (postType: string, taxonomyType: string) => Promise<ThemeTaxonomyView[]>;
@@ -139,4 +144,5 @@ export type ResolvedPublicRoute = {
   taxonomyType?: string;
   taxonomySlug?: string;
   taxonomyBase?: string;
+  searchQuery?: string;
 };

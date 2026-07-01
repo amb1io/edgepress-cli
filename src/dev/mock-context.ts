@@ -158,6 +158,18 @@ function buildArchivePageUrl(pathname: string, page: number): string {
   return `${url.pathname}${qs ? `?${qs}` : ""}`;
 }
 
+function buildSearchPageUrl(pathname: string, q: string, page: number, postType?: string): string {
+  const url = new URL(pathname, "http://localhost");
+  if (q) url.searchParams.set("q", q);
+  else url.searchParams.delete("q");
+  if (postType) url.searchParams.set("post_type", postType);
+  else url.searchParams.delete("post_type");
+  if (page <= 1) url.searchParams.delete("page");
+  else url.searchParams.set("page", String(page));
+  const qs = url.searchParams.toString();
+  return `${url.pathname}${qs ? `?${qs}` : ""}`;
+}
+
 export function buildMockContext(
   url: URL,
   route: ResolvedPublicRoute,
@@ -170,6 +182,95 @@ export function buildMockContext(
   const siteName = "Edgepress Theme Dev";
   const siteDescription = "Preview local do tema Liquid";
   const homeListPosts = pkg.manifest.home_list_posts === true;
+
+  if (route.kind === "search") {
+    const q = route.searchQuery?.trim() || url.searchParams.get("q")?.trim() || "tecnologia";
+    const page = route.page ?? 1;
+    const sampleMeta = {
+      post_thumbnail_path: "https://placehold.co/800x400?text=Cover",
+    };
+    const sampleCover = resolveCoverImageSync({ meta_values: sampleMeta, media: [] }, baseUrl);
+    const samplePost: ThemePostView = {
+      id: 1,
+      title: `Resultado: ${q}`,
+      slug: "hello-world",
+      excerpt: "Preview de resultado de busca.",
+      body_html: "<p>Post encontrado na busca mock.</p>",
+      author_name: "Edgepress",
+      published_at: Date.now(),
+      post_type_slug: "post",
+      meta: Object.fromEntries(Object.entries(sampleMeta).map(([k, v]) => [k, String(v)])),
+      ...(sampleCover ? { cover_image: sampleCover } : {}),
+    };
+    const posts = q
+      ? [
+          samplePost,
+          { ...samplePost, id: 2, title: `Outro resultado: ${q}`, slug: "item-2" },
+        ]
+      : [];
+    const archiveTitle = q ? `Busca: ${q}` : "Busca";
+    const total = posts.length;
+
+    return {
+      site: {
+        title: siteName,
+        description: siteDescription,
+        locale,
+        locale_prefix: localePrefix,
+        home_url: homeUrl,
+        base_url: baseUrl,
+        html_lang: localeToHtmlLang(locale),
+        year: new Date().getFullYear(),
+      },
+      seo: resolveThemeSeoContext({
+        resolvedKind: "search",
+        isArchiveRoute: true,
+        archiveTitle,
+        homeListPosts: false,
+        siteName,
+        siteDescription,
+        canonicalUrl: `${baseUrl}${buildSearchPageUrl(route.path, q, page)}`,
+        ...(posts[0]?.cover_image ? { ogImage: posts[0].cover_image } : {}),
+      }),
+      menus: {
+        primary: [
+          { label: "Home", url: "/", active: false },
+          { label: "Blog", url: "/posts", active: false },
+        ],
+      },
+      theme: {
+        slug: pkg.manifest.slug,
+        version: pkg.manifest.version,
+        asset_base_url: `${baseUrl}/themes-assets/${pkg.manifest.slug}`,
+      },
+      route: {
+        kind: "search",
+        path: route.path,
+        locale,
+      },
+      body_class: buildBodyClass(route, undefined, "search"),
+      locale_switcher: buildLocaleSwitcher(route.locale, route, "search"),
+      posts,
+      archive: { title: archiveTitle, type: "search" },
+      search: { query: q, total },
+      pagination: {
+        page,
+        total_pages: 1,
+        ...(page > 1 ? { prev_url: buildSearchPageUrl(route.path, q, page - 1) } : {}),
+      },
+      is_front_page: false,
+      is_single: false,
+      is_page: false,
+      is_singular: false,
+      is_archive: false,
+      is_search: true,
+      is_404: false,
+      have_posts: posts.length > 0,
+      get_taxonomies: mockGetTaxonomies,
+      get_related_posts: buildMockGetRelatedPosts(route),
+      get_author: buildMockGetAuthor(),
+    };
+  }
 
   if (route.kind === "taxonomy" && route.taxonomyType && route.taxonomySlug) {
     const term = resolveMockTerm(route.taxonomyType, route.taxonomySlug);
@@ -263,6 +364,7 @@ export function buildMockContext(
       is_page: false,
       is_singular: false,
       is_archive: kind === "taxonomy",
+      is_search: false,
       is_404: kind === "404",
       have_posts: posts.length > 0,
       get_taxonomies: mockGetTaxonomies,
@@ -321,6 +423,7 @@ export function buildMockContext(
   const is_page = kind === "page";
   const is_singular = is_single || is_page;
   const is_archive = kind === "archive";
+  const is_search = false;
   const is_404 = kind === "404";
   const have_posts = posts.length > 0;
   const archiveTitle = devArchive?.title ?? "Blog";
@@ -397,6 +500,7 @@ export function buildMockContext(
     is_page,
     is_singular,
     is_archive,
+    is_search,
     is_404,
     have_posts,
     get_taxonomies: mockGetTaxonomies,

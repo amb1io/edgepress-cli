@@ -61,4 +61,21 @@ describe("resolvePublicRoute", () => {
       path: "/category/bad slug",
     });
   });
+
+  it("resolves search route", () => {
+    expect(resolvePublicRoute("/search", new URLSearchParams("q=foo&page=2"))).toEqual({
+      kind: "search",
+      locale: "pt-br",
+      path: "/search",
+      searchQuery: "foo",
+      page: 2,
+    });
+    expect(resolvePublicRoute("/en/search", new URLSearchParams())).toEqual({
+      kind: "search",
+      locale: "en",
+      path: "/en/search",
+      searchQuery: "",
+      page: 1,
+    });
+  });
 });

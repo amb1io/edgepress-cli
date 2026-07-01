@@ -4,6 +4,7 @@ import {
   buildTaxonomyPublicPath,
   resolveTaxonomyFromSegments,
   resolveTaxonomyUrlBase,
+  taxonomyTypeToUrlBase,
 } from "../taxonomy-routes.ts";
 
 describe("taxonomy-routes", () => {
@@ -32,5 +33,11 @@ describe("taxonomy-routes", () => {
   it("builds public taxonomy paths with locale prefix", () => {
     expect(buildTaxonomyPublicPath("category", "visum", "")).toBe("/category/visum");
     expect(buildTaxonomyPublicPath("tag", "foo", "/en")).toBe("/en/tag/foo");
+  });
+
+  it("maps taxonomy type to URL base segment", () => {
+    expect(taxonomyTypeToUrlBase("category")).toBe("category");
+    expect(taxonomyTypeToUrlBase("tag")).toBe("tag");
+    expect(taxonomyTypeToUrlBase("categorias")).toBe("categorias");
   });
 });
