@@ -62,3 +62,15 @@ Use `{% get_related_posts post.id as related %}` em singles para listar posts da
 Exemplos com locale: `/en/category/visum`, `/en/posts`.
 
 No preview mock, termos de exemplo incluem `/category/tecnologia` e `/category/visum`.
+
+## Menus (`{% nav_menu %}`)
+
+No CMS, cada menu é um post do tipo `menus` (slug = location, ex.: `primary`, `footer`). Os itens são **posts filhos** do mesmo CPT, com `meta_values.link_type`:
+
+| `link_type` | Destino |
+|-------------|---------|
+| `post` | Página/post/CPT (`target_slug`, `target_locale_code`) |
+| `custom` | URL livre no `body` do item |
+| `taxonomy` | Termo de taxonomia (`target_taxonomy_type`, `target_slug`) |
+
+Com `--connect`, o CLI carrega menus publicados via `/api/content/posts?filter_post_type=menus` e monta URLs com a mesma lógica do core (`buildMenuItemUrl`). Use `{% nav_menu 'primary' %}` (ou o slug do menu pai).
