@@ -63,6 +63,7 @@ export function validateThemeManifest(raw: unknown): ThemeManifest {
     ...(typeof obj.home_content_key === "string"
       ? { home_content_key: obj.home_content_key }
       : {}),
+    ...(obj.home_list_posts === true ? { home_list_posts: true } : {}),
   };
 }
 
@@ -93,14 +94,24 @@ export function loadThemeAssets(themeDir: string): Map<string, ArrayBuffer> {
   const assets = new Map<string, ArrayBuffer>();
   if (!fs.existsSync(assetsDir)) return assets;
 
+  function walk(relativeRoot: string): void {
+    const abs = path.join(assetsDir, relativeRoot);
+    const stat = fs.statSync(abs);
+    if (stat.isFile()) {
+      const buf = fs.readFileSync(abs);
+      assets.set(
+        relativeRoot.replace(/\\/g, "/"),
+        buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
+      );
+      return;
+    }
+    for (const name of fs.readdirSync(abs)) {
+      walk(path.join(relativeRoot, name));
+    }
+  }
+
   for (const name of fs.readdirSync(assetsDir)) {
-    const filePath = path.join(assetsDir, name);
-    if (!fs.statSync(filePath).isFile()) continue;
-    const buf = fs.readFileSync(filePath);
-    assets.set(
-      name,
-      buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
-    );
+    walk(name);
   }
 
   return assets;

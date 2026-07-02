@@ -1,4 +1,4 @@
-export type ThemeRouteKind = "home" | "single" | "page" | "archive" | "404";
+export type ThemeRouteKind = "home" | "single" | "page" | "archive" | "taxonomy" | "search" | "404";
 
 export type ThemeManifest = {
   name: string;
@@ -10,6 +10,8 @@ export type ThemeManifest = {
   layout?: string;
   assets_dir?: string;
   home_content_key?: string;
+  /** When true, home is a post listing (`posts`); when false/absent, home uses `home_content_key` as singular content */
+  home_list_posts?: boolean;
 };
 
 export type ThemePackageRecord = {
@@ -22,6 +24,17 @@ export type MenuItem = {
   label: string;
   url: string;
   active: boolean;
+};
+
+export type ThemeTaxonomyView = {
+  name: string;
+  slug: string;
+};
+
+export type ThemeAuthorView = {
+  name: string;
+  image: string;
+  description: string;
 };
 
 export type ThemePostView = {
@@ -86,6 +99,10 @@ export type ThemeRenderContext = {
     kind: ThemeRouteKind;
     path: string;
     locale: string;
+    /** DB taxonomy type when `kind` is `taxonomy` (e.g. `category`). */
+    taxonomy_type?: string;
+    /** Term slug when `kind` is `taxonomy` (e.g. `visum`). */
+    taxonomy_slug?: string;
   };
   body_class: string;
   locale_switcher: LocaleSwitcherItem[];
@@ -101,8 +118,19 @@ export type ThemeRenderContext = {
   is_page: boolean;
   is_singular: boolean;
   is_archive: boolean;
+  is_search: boolean;
   is_404: boolean;
+  search?: {
+    query: string;
+    total: number;
+  };
   have_posts: boolean;
+  /** Fetch taxonomy terms for a post type (used by {% get_taxonomies %} tag). */
+  get_taxonomies?: (postType: string, taxonomyType: string) => Promise<ThemeTaxonomyView[]>;
+  /** Fetch related posts by shared category (used by {% get_related_posts %} tag). */
+  get_related_posts?: (idOrSlug: string | number, limit?: number) => Promise<ThemePostView[]>;
+  /** Fetch author for a post (used by {% get_author %} tag). */
+  get_author?: (idOrSlug: string | number) => Promise<ThemeAuthorView | null>;
   content?: string;
 };
 
@@ -113,4 +141,8 @@ export type ResolvedPublicRoute = {
   slug?: string;
   postType?: string;
   page?: number;
+  taxonomyType?: string;
+  taxonomySlug?: string;
+  taxonomyBase?: string;
+  searchQuery?: string;
 };
