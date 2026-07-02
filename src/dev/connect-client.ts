@@ -45,6 +45,7 @@ import {
   isNumericPostIdentifier,
 } from "../engine/related-posts-cache.ts";
 import { buildAuthorCacheKey, devAuthorCache } from "../engine/author-cache.ts";
+import { injectCategoryMeta } from "../engine/post-category-meta.ts";
 
 type ApiListResponse<T> = {
   items?: T[];
@@ -103,6 +104,8 @@ function mapPost(row: ApiPostRow, baseUrl: string): ThemePostView {
       if (v != null) meta[k] = String(v);
     }
   }
+
+  injectCategoryMeta(meta, row.taxonomies);
 
   return {
     id: Number(row.id ?? 0),
