@@ -38,3 +38,9 @@ export function isPublicThemeListPost(post: PublicThemeListPostInput): boolean {
 export function filterPublicThemeListPosts<T extends PublicThemeListPostInput>(posts: T[]): T[] {
   return posts.filter(isPublicThemeListPost);
 }
+
+/** Parent menu container posts (location key = slug), excluding sidebar menu entries. */
+export function isMenuLocationContainer(post: PublicThemeListPostInput): boolean {
+  const meta = post.meta_values ?? {};
+  return !isTruthyShowInMenu(meta["show_in_menu"]);
+}

@@ -1,0 +1,33 @@
+{% layout 'layouts/base' %}
+<div class="container search">
+  <header class="search-header">
+    <h1>
+      {% if search.query != blank %}
+        {% if route.locale == 'en' %}Results for “{{ search.query }}”{% else %}Resultados para “{{ search.query }}”{% endif %}
+      {% else %}
+        {% if route.locale == 'en' %}Search{% else %}Busca{% endif %}
+      {% endif %}
+    </h1>
+    <p>{{ search.total }} {% if route.locale == 'en' %}result(s){% else %}resultado(s){% endif %}</p>
+  </header>
+  {% for item in posts %}
+    {% unless forloop.first %}<hr />{% endunless %}
+    <article class="post-item">
+      {% if item.cover_image %}
+        <figure>
+          <a href="{{ site.locale_prefix }}/{{ item.slug }}">
+            <img src="{{ item.cover_image }}" alt="" loading="lazy" />
+          </a>
+        </figure>
+      {% endif %}
+      <h2><a href="{{ site.locale_prefix }}/{{ item.slug }}">{{ item.title }}</a></h2>
+      {% if item.excerpt %}<p>{{ item.excerpt }}</p>{% endif %}
+      <div class="post-item-footer">
+        <span class="post-item-date">— {{ item.published_at | post_date }}</span>
+      </div>
+    </article>
+  {% else %}
+    <p>{% if route.locale == 'en' %}No results found.{% else %}Nenhum resultado encontrado.{% endif %}</p>
+  {% endfor %}
+  {% pagination %}
+</div>
