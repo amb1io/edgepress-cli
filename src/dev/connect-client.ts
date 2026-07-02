@@ -23,6 +23,7 @@ import {
   resolveArchivePostTypeFromRoute,
 } from "../engine/post-type-routes.ts";
 import { buildMockContext } from "./mock-context.ts";
+import { injectCategoryMeta } from "../engine/post-category-meta.ts";
 
 type ApiListResponse<T> = {
   items?: T[];
@@ -46,6 +47,7 @@ type ApiPostRow = {
   media?: Array<{ id?: number; meta_values?: Record<string, unknown> }>;
   seo?: { title?: string; description?: string; canonical?: string } | null;
   json_ld?: Record<string, unknown>[] | null;
+  taxonomies?: Array<{ id?: number; slug?: string; type?: string; name?: string }>;
 };
 
 type SiteResponse = {
@@ -74,6 +76,8 @@ function mapPost(row: ApiPostRow, baseUrl: string): ThemePostView {
       if (v != null) meta[k] = String(v);
     }
   }
+
+  injectCategoryMeta(meta, row.taxonomies);
 
   return {
     id: Number(row.id ?? 0),
