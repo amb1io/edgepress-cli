@@ -1,6 +1,7 @@
-import { watch } from "node:fs";
+import { watch, readFileSync, existsSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AuthenticatedClient } from "../auth/handshake.ts";
 import { renderTheme, resetLiquidForTests } from "../engine/render.ts";
 import { resolvePublicRoute } from "../engine/resolve-route.ts";
@@ -14,6 +15,7 @@ import { buildMockContext } from "./mock-context.ts";
 
 const RELOAD_PATH = "/__theme_dev/events";
 const WATCHABLE = /\.(liquid|json|css|js|svg|png|jpe?g|webp)$/i;
+const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
 export type ThemeDevServerOptions = {
   themeDir: string;
@@ -102,6 +104,27 @@ export function startThemeDevServer(options: ThemeDevServerOptions): void {
       if (pathname === RELOAD_PATH) {
         serveSse(res);
         return;
+      }
+
+      if (pathname.startsWith("/edgepress-assets/")) {
+        const assetName = pathname.replace(/^\/edgepress-assets\//, "");
+        if (assetName === "blocknote-readonly.js" || assetName === "blocknote-readonly.css") {
+          const filePath = join(CLI_ROOT, "dist/blocknote", assetName);
+          if (!existsSync(filePath)) {
+            res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+            res.end("BlockNote bundle missing — run npm run build:blocknote in @edgepress/cli");
+            return;
+          }
+          const contentType = assetName.endsWith(".css")
+            ? "text/css; charset=utf-8"
+            : "application/javascript; charset=utf-8";
+          res.writeHead(200, {
+            "Content-Type": contentType,
+            "Cache-Control": "no-store",
+          });
+          res.end(readFileSync(filePath));
+          return;
+        }
       }
 
       if (pathname.startsWith("/themes-assets/")) {

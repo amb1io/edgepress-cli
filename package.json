@@ -8,18 +8,29 @@
   },
   "scripts": {
     "dev": "tsx src/cli.ts",
+    "build:blocknote": "tsx scripts/build-blocknote.ts",
+    "prepare": "npm run build:blocknote",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
+    "@blocknote/core": "^0.46.2",
+    "@blocknote/mantine": "^0.46.2",
+    "@blocknote/react": "^0.46.2",
+    "@blocknote/xl-multi-column": "^0.46.2",
     "commander": "^13.1.0",
     "liquidjs": "^10.27.1",
     "nanotar": "^0.3.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "sanitize-html": "^2.17.5"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
     "@types/sanitize-html": "^2.16.0",
+    "esbuild": "^0.25.12",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.16"
