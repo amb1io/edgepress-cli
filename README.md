@@ -74,3 +74,9 @@ No CMS, cada menu é um post do tipo `menus` (slug = location, ex.: `primary`, `
 | `taxonomy` | Termo de taxonomia (`target_taxonomy_type`, `target_slug`) |
 
 Com `--connect`, o CLI carrega menus publicados via `/api/content/posts?filter_post_type=menus` e monta URLs com a mesma lógica do core (`buildMenuItemUrl`). Use `{% nav_menu 'primary' %}` (ou o slug do menu pai).
+
+## BlockNote no front (`{% blocknote_content %}`)
+
+Para conteúdo BlockNote (colunas, blocos custom), adicione `"blocknote"` em `theme.json` → `supports` e use `{% blocknote_content %}` no template. A tag renderiza HTML sanitizado imediatamente e hidrata BlockNote readonly quando `body_blocks` existe.
+
+`{% scripts_footer %}` injeta `/edgepress-assets/blocknote-readonly.js` (bundle gerado por `npm run build:blocknote` no install).
