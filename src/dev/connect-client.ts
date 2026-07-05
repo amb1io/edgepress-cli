@@ -60,6 +60,7 @@ type ApiPostRow = {
   slug?: string;
   excerpt?: string | null;
   body?: string | null;
+  body_blocks?: string | null;
   author_id?: string | null;
   author_name?: string;
   published_at?: number | string | null;
@@ -113,6 +114,7 @@ function mapPost(row: ApiPostRow, baseUrl: string): ThemePostView {
     slug: String(row.slug ?? ""),
     excerpt: String(row.excerpt ?? ""),
     body_html: String(row.body ?? ""),
+    body_blocks: row.body_blocks ?? null,
     author_name: String(row.author_name ?? ""),
     published_at:
       typeof row.published_at === "number"

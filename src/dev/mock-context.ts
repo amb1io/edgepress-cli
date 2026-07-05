@@ -242,6 +242,7 @@ export function buildMockContext(
         slug: pkg.manifest.slug,
         version: pkg.manifest.version,
         asset_base_url: `${baseUrl}/themes-assets/${pkg.manifest.slug}`,
+        supports: pkg.manifest.supports ?? [],
       },
       route: {
         kind: "search",
@@ -341,6 +342,7 @@ export function buildMockContext(
         slug: pkg.manifest.slug,
         version: pkg.manifest.version,
         asset_base_url: `${baseUrl}/themes-assets/${pkg.manifest.slug}`,
+        supports: pkg.manifest.supports ?? [],
       },
       route: {
         kind: kind as ThemeRenderContext["route"]["kind"],
@@ -394,6 +396,19 @@ export function buildMockContext(
     excerpt: "Texto de exemplo para preview local do tema.",
     body_html:
       "<p>Este é o preview do tema via <code>edgepress theme dev</code>. Use <code>--connect</code> para dados reais do CMS.</p>",
+    ...(kind === "home"
+      ? {
+          body_blocks: JSON.stringify([
+            {
+              id: "preview-col-list",
+              type: "columnList",
+              props: {},
+              content: [],
+              children: [],
+            },
+          ]),
+        }
+      : {}),
     author_name: "Edgepress",
     published_at: Date.now(),
     post_type_slug: kind === "single" ? "post" : "page",
@@ -482,6 +497,7 @@ export function buildMockContext(
       slug: pkg.manifest.slug,
       version: pkg.manifest.version,
       asset_base_url: `${baseUrl}/themes-assets/${pkg.manifest.slug}`,
+      supports: pkg.manifest.supports ?? [],
     },
     route: { kind: kind as ThemeRenderContext["route"]["kind"], path: route.path, locale },
     body_class: buildBodyClass(route, post, kind),

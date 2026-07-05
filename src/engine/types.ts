@@ -43,6 +43,8 @@ export type ThemePostView = {
   slug: string;
   excerpt: string;
   body_html: string;
+  /** BlockNote JSON blocks for optional client hydration ({% blocknote_content %}). */
+  body_blocks?: string | null;
   author_name: string;
   published_at: number | null;
   post_type_slug: string;
@@ -94,6 +96,7 @@ export type ThemeRenderContext = {
     slug: string;
     version: string;
     asset_base_url: string;
+    supports: string[];
   };
   route: {
     kind: ThemeRouteKind;
