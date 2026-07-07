@@ -13,13 +13,15 @@ export function injectCategoryMeta(
   meta: Record<string, string>,
   taxonomies: PostTaxonomyForCategoryMeta[] | undefined,
 ): void {
-  if (meta.category_slug) return;
+  const terms = taxonomies ?? [];
 
-  const category = (taxonomies ?? []).find((term) => term.type === "category");
-  if (!category?.slug) return;
-
-  meta.category_slug = String(category.slug);
-  if (category.name && !meta.category_name) {
-    meta.category_name = String(category.name);
+  if (!meta.category_slug) {
+    const category = terms.find((term) => term.type === "category");
+    if (category?.slug) {
+      meta.category_slug = String(category.slug);
+      if (category.name && !meta.category_name) {
+        meta.category_name = String(category.name);
+      }
+    }
   }
 }
