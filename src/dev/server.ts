@@ -4,8 +4,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AuthenticatedClient } from "../auth/handshake.ts";
 import { renderTheme, resetLiquidForTests } from "../engine/render.ts";
-import { resolvePublicRoute } from "../engine/resolve-route.ts";
-import type { ThemePackageRecord, ThemeRenderContext } from "../engine/types.ts";
+import type { ThemePackageRecord } from "../engine/types.ts";
 import {
   loadThemeAssets,
   loadThemePackage,
@@ -89,13 +88,6 @@ export function startThemeDevServer(options: ThemeDevServerOptions): void {
     res.on("close", () => reloadClients.delete(res));
   }
 
-  async function buildContext(url: URL, route: ReturnType<typeof resolvePublicRoute>): Promise<ThemeRenderContext> {
-    if (connectClient) {
-      return buildConnectedContext(connectClient, url, route, themePackage);
-    }
-    return buildMockContext(url, route, themePackage);
-  }
-
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", `http://localhost:${port}`);
@@ -149,8 +141,10 @@ export function startThemeDevServer(options: ThemeDevServerOptions): void {
         return;
       }
 
-      const route = resolvePublicRoute(pathname, url.searchParams);
-      const ctx = await buildContext(url, route);
+      const templateKeys = Object.keys(themePackage.templates);
+      const ctx = connectClient
+        ? await buildConnectedContext(connectClient, url, pathname, url.searchParams, themePackage)
+        : await buildMockContext(url, pathname, url.searchParams, themePackage);
       const html = injectLiveReload(await renderTheme(themePackage, ctx));
 
       res.writeHead(ctx.route.kind === "404" ? 404 : 200, {
