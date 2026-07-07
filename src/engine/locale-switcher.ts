@@ -3,19 +3,35 @@ import { publicLocaleHomeUrl, publicLocaleUrlPrefix } from "./resolve-route.ts";
 import { buildArchivePublicPath } from "./post-type-routes.ts";
 import { buildTaxonomyPublicPath } from "./taxonomy-routes.ts";
 
+export type LocaleSwitcherOptions = {
+  archivePostType?: string;
+  taxonomyCanonicalSlug?: string;
+  resolveLocalizedTaxonomySlug?: (
+    canonicalSlug: string,
+    targetPublicLocale: string,
+  ) => Promise<string>;
+};
+
 /** URL for switching to `targetLocale` while preserving the current public route shape. */
-export function buildLocaleSwitcherUrl(
+export async function buildLocaleSwitcherUrl(
   targetLocale: string,
   route: ResolvedPublicRoute,
   kind: ThemeRouteKind,
-  archivePostType?: string,
-): string {
+  options: LocaleSwitcherOptions = {},
+): Promise<string> {
   const prefix = publicLocaleUrlPrefix(targetLocale);
-  if (kind === "taxonomy" && route.taxonomyBase && route.taxonomySlug) {
-    return buildTaxonomyPublicPath(route.taxonomyBase, route.taxonomySlug, prefix);
+  if (kind === "taxonomy" && route.taxonomyType && route.taxonomySlug) {
+    let termSlug = route.taxonomySlug;
+    if (options.taxonomyCanonicalSlug && options.resolveLocalizedTaxonomySlug) {
+      termSlug = await options.resolveLocalizedTaxonomySlug(
+        options.taxonomyCanonicalSlug,
+        targetLocale,
+      );
+    }
+    return buildTaxonomyPublicPath(route.taxonomyType, termSlug, prefix);
   }
   if (kind === "archive") {
-    return buildArchivePublicPath(archivePostType ?? "post", prefix);
+    return buildArchivePublicPath(options.archivePostType ?? "post", prefix);
   }
   if (kind === "search") {
     const path = `${prefix}/search`;
@@ -34,17 +50,19 @@ const LOCALE_SWITCHER_META: ReadonlyArray<{ code: string; flag: string; label: s
   { code: "en", flag: "🇺🇸", label: "EN" },
 ];
 
-export function buildLocaleSwitcher(
+export async function buildLocaleSwitcher(
   currentLocale: string,
   route: ResolvedPublicRoute,
   resolvedKind: ThemeRouteKind,
-  archivePostType?: string,
-): LocaleSwitcherItem[] {
-  return LOCALE_SWITCHER_META.map(({ code, flag, label }) => ({
-    code,
-    flag,
-    label,
-    url: buildLocaleSwitcherUrl(code, route, resolvedKind, archivePostType),
-    active: code === currentLocale,
-  }));
+  options: LocaleSwitcherOptions = {},
+): Promise<LocaleSwitcherItem[]> {
+  return Promise.all(
+    LOCALE_SWITCHER_META.map(async ({ code, flag, label }) => ({
+      code,
+      flag,
+      label,
+      url: await buildLocaleSwitcherUrl(code, route, resolvedKind, options),
+      active: code === currentLocale,
+    })),
+  );
 }

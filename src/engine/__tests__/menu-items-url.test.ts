@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildMenuItemTree,
   buildMenuItemUrl,
+  menuChildPostToFlatItem,
   menuChildPostToLinkItem,
   parseLinkType,
+  type MenuItemFlatPublic,
 } from "../menu-items-url.ts";
 
 describe("buildMenuItemUrl", () => {
@@ -84,5 +87,63 @@ describe("menuChildPostToLinkItem", () => {
         "pt_BR",
       ),
     ).toEqual({ label: "News", url: "/category/news" });
+  });
+});
+
+describe("menuChildPostToFlatItem", () => {
+  it("extracts submenu fields from meta_values", () => {
+    const flat = menuChildPostToFlatItem(
+      {
+        id: 42,
+        title: "Design",
+        slug: "design-42",
+        body: "",
+        meta_values: {
+          link_type: "post",
+          target_post_id: 10,
+          target_slug: "design",
+          parent_menu_item_id: 5,
+          submenu_sort: "creation",
+          submenu_display: ["title", "thumbnail"],
+        },
+      },
+      "pt_BR",
+    );
+
+    expect(flat).toMatchObject({
+      id: 42,
+      label: "Design",
+      slug: "design-42",
+      target_post_id: 10,
+      parent_menu_item_id: 5,
+      submenu_sort: "creation",
+      submenu_display: ["title", "thumbnail"],
+    });
+  });
+});
+
+describe("buildMenuItemTree", () => {
+  it("builds nested tree from flat rows", () => {
+    const flat: MenuItemFlatPublic[] = [
+      {
+        id: 1,
+        label: "Parent",
+        url: "/parent",
+        slug: "parent-1",
+        order: 1,
+        parent_menu_item_id: null,
+      },
+      {
+        id: 2,
+        label: "Child",
+        url: "/child",
+        slug: "child-1",
+        order: 1,
+        parent_menu_item_id: 1,
+      },
+    ];
+    const tree = buildMenuItemTree(flat);
+    expect(tree[0]?.children).toHaveLength(1);
+    expect(tree[0]?.children[0]?.slug).toBe("child-1");
   });
 });

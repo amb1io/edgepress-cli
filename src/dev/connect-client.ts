@@ -12,6 +12,7 @@ import type {
   ThemePackageRecord,
   ThemePostView,
   ThemeRenderContext,
+  CustomFieldItem,
 } from "../engine/types.ts";
 import {
   localeToHtmlLang,
@@ -19,12 +20,13 @@ import {
   publicLocaleToDbCode,
   publicLocaleUrlPrefix,
 } from "../engine/resolve-route.ts";
+import type { RouteKindResolverDeps } from "../engine/resolve-route-kind.ts";
+import { resolveThemeRoute } from "../engine/resolve-theme-route.ts";
 import { filterPublicThemeListPosts, isMenuLocationContainer } from "../engine/post-filters.ts";
 import {
+  buildMenuItemTree,
   buildThemeMenusRecord,
-  menuChildPostToLinkItem,
-  menuOrderFromMeta,
-  parsePostMetaValues,
+  menuChildPostToFlatItem,
 } from "../engine/menu-items-url.ts";
 import {
   filterArchivablePostTypes,
@@ -33,8 +35,16 @@ import {
 import { buildMockContext } from "./mock-context.ts";
 import { buildLocaleSwitcher } from "../engine/locale-switcher.ts";
 import {
+  createConnectTaxonomyTranslationResolver,
+  type TaxonomyTranslationResolver,
+} from "../engine/taxonomy-translation-client.ts";
+import { buildBodyClass } from "../engine/body-class.ts";
+import {
   createGetTaxonomiesHandler,
+  createGetTaxonomiesLocaleHandler,
   createGetRelatedPostsHandler,
+  createGetTaxonomyPostsHandler,
+  createGetPostsHandler,
   createGetAuthorHandler,
   filterLeafTaxonomyItems,
   isTaxonomyAllowedForPostType,
@@ -46,6 +56,7 @@ import {
 } from "../engine/related-posts-cache.ts";
 import { buildAuthorCacheKey, devAuthorCache } from "../engine/author-cache.ts";
 import { injectCategoryMeta } from "../engine/post-category-meta.ts";
+import { injectCustomFieldsMeta } from "../engine/custom-fields-meta.ts";
 
 type ApiListResponse<T> = {
   items?: T[];
@@ -60,6 +71,7 @@ type ApiPostRow = {
   slug?: string;
   excerpt?: string | null;
   body?: string | null;
+  body_blocks?: string | null;
   author_id?: string | null;
   author_name?: string;
   published_at?: number | string | null;
@@ -75,8 +87,10 @@ type ApiPostRow = {
   taxonomies?: Array<{ id?: number; slug?: string; type?: string; name?: string }>;
 };
 
-type CustomFieldRow = { name?: string; value?: string; type?: string };
-type CustomFieldItem = { title?: string; fields?: CustomFieldRow[] };
+function withPostsListIncludes(path: string): string {
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}include=custom_fields`;
+}
 
 type SiteResponse = {
   site_name?: string;
@@ -107,12 +121,16 @@ function mapPost(row: ApiPostRow, baseUrl: string): ThemePostView {
 
   injectCategoryMeta(meta, row.taxonomies);
 
+  const customFields = Array.isArray(row.custom_fields) ? row.custom_fields : [];
+  injectCustomFieldsMeta(meta, customFields);
+
   return {
     id: Number(row.id ?? 0),
     title: String(row.title ?? ""),
     slug: String(row.slug ?? ""),
     excerpt: String(row.excerpt ?? ""),
     body_html: String(row.body ?? ""),
+    body_blocks: row.body_blocks ?? null,
     author_name: String(row.author_name ?? ""),
     published_at:
       typeof row.published_at === "number"
@@ -122,27 +140,13 @@ function mapPost(row: ApiPostRow, baseUrl: string): ThemePostView {
           : null,
     post_type_slug: String(row.post_type_slug ?? "post"),
     meta,
+    custom_fields: customFields,
   };
 }
 
 function withLocaleQuery(path: string, dbLocale: string): string {
   const sep = path.includes("?") ? "&" : "?";
   return `${path}${sep}locale=${encodeURIComponent(dbLocale)}`;
-}
-
-function buildBodyClass(
-  route: ResolvedPublicRoute,
-  post?: ThemePostView,
-  kind?: string,
-  taxonomy?: { type: string; slug: string },
-): string {
-  const routeKind = kind ?? route.kind;
-  const parts = [`route-${routeKind}`, `locale-${route.locale.replace(/-/g, "_")}`];
-  if (taxonomy?.type) parts.push(`taxonomy-${taxonomy.type}`);
-  if (taxonomy?.slug) parts.push(`term-${taxonomy.slug.replace(/\//g, "-")}`);
-  if (post?.post_type_slug) parts.push(`type-${post.post_type_slug}`);
-  if (post?.slug) parts.push(`slug-${post.slug.replace(/\//g, "-")}`);
-  return parts.join(" ");
 }
 
 function buildArchivePageUrl(pathname: string, page: number): string {
@@ -223,8 +227,57 @@ function inferRouteKind(route: ResolvedPublicRoute, post?: ThemePostView): Theme
   if (route.kind === "archive") return "archive";
   if (route.kind === "taxonomy") return "taxonomy";
   if (route.kind === "404") return "404";
-  if (post?.post_type_slug === "post") return "single";
-  return "page";
+  if (post?.post_type_slug === "page") return "page";
+  return "single";
+}
+
+async function fetchTaxonomyTypes(client: AuthenticatedClient): Promise<string[]> {
+  try {
+    const list = await fetchJson<ApiListResponse<ApiTaxonomyRow>>(
+      client,
+      "/api/content/taxonomies?limit=500",
+    );
+    const types = new Set<string>();
+    for (const item of list.items ?? []) {
+      const type = String(item.type ?? "").trim();
+      if (type) types.add(type);
+    }
+    return [...types];
+  } catch {
+    return ["category", "tag"];
+  }
+}
+
+async function createConnectRouteKindDeps(
+  client: AuthenticatedClient,
+  dbLocale: string,
+  taxonomyResolver: TaxonomyTranslationResolver,
+): Promise<RouteKindResolverDeps> {
+  const [archivablePostTypes, taxonomyTypes] = await Promise.all([
+    fetchArchivablePostTypes(client),
+    fetchTaxonomyTypes(client),
+  ]);
+  return {
+    archivablePostTypes,
+    taxonomyTypes,
+    resolvePostBySlug: async (slug) => {
+      try {
+        const detail = await fetchJson<ApiPostRow>(
+          client,
+          withLocaleQuery(`/api/content/posts/${encodeURIComponent(slug)}`, dbLocale),
+        );
+        return { post_type_slug: String(detail.post_type_slug ?? detail.post_types_slug ?? "page") };
+      } catch {
+        return null;
+      }
+    },
+    resolveTaxonomyTerm: async (taxonomyType, termSlug) => {
+      const term = await taxonomyResolver.resolveTermBySlug(taxonomyType, termSlug);
+      if (!term) return null;
+      const localized = await taxonomyResolver.localizeTerm(term);
+      return { slug: localized.slug };
+    },
+  };
 }
 
 async function fetchArchivablePostTypes(client: AuthenticatedClient) {
@@ -262,7 +315,7 @@ async function fetchArchivePosts(
   };
 }
 
-function applyArchiveContext(
+async function applyArchiveContext(
   base: ThemeRenderContext,
   route: ResolvedPublicRoute,
   archive: { postType: string; title: string },
@@ -273,7 +326,7 @@ function applyArchiveContext(
   origin: string,
   siteName: string,
   siteDescription: string,
-): void {
+): Promise<void> {
   base.posts = posts.length > 0 ? posts : base.posts;
   base.have_posts = base.posts.length > 0;
   base.route.kind = "archive";
@@ -303,7 +356,9 @@ function applyArchiveContext(
     ...(posts[0]?.cover_image ? { ogImage: posts[0].cover_image } : {}),
   });
   base.body_class = buildBodyClass(route, undefined, "archive");
-  base.locale_switcher = buildLocaleSwitcher(route.locale, route, "archive", archive.postType);
+  base.locale_switcher = await buildLocaleSwitcher(route.locale, route, "archive", {
+    archivePostType: archive.postType,
+  });
 }
 
 type ApiTaxonomyTerm = {
@@ -313,28 +368,6 @@ type ApiTaxonomyTerm = {
   type?: string;
 };
 
-async function fetchTaxonomyTerm(
-  client: AuthenticatedClient,
-  taxonomyType: string,
-  termSlug: string,
-  dbLocale: string,
-): Promise<ApiTaxonomyTerm | null> {
-  try {
-    const list = await fetchJson<ApiListResponse<ApiTaxonomyTerm>>(
-      client,
-      withLocaleQuery(
-        `/api/content/taxonomies?filter_type=${encodeURIComponent(taxonomyType)}&filter_slug=${encodeURIComponent(termSlug)}&limit=1`,
-        dbLocale,
-      ),
-    );
-    const term = list.items?.[0];
-    if (!term || String(term.slug ?? "") !== termSlug) return null;
-    return term;
-  } catch {
-    return null;
-  }
-}
-
 async function fetchTaxonomyArchivePosts(
   client: AuthenticatedClient,
   taxonomyType: string,
@@ -343,10 +376,12 @@ async function fetchTaxonomyArchivePosts(
   dbLocale: string,
   attachmentCache: CoverImageAttachmentCache,
 ): Promise<{ posts: ThemePostView[]; total: number; limit: number }> {
+  const limit = 10;
+  const order = "published_at";
   const list = await fetchJson<ApiListResponse<ApiPostRow>>(
     client,
     withLocaleQuery(
-      `/api/content/posts?page=${page}&limit=10&order=published_at&orderDir=desc&filter_status=published&filter_taxonomy_type=${encodeURIComponent(taxonomyType)}&filter_taxonomy_slug=${encodeURIComponent(termSlug)}`,
+      `/api/content/posts?page=${page}&limit=${limit}&order=${order}&orderDir=desc&filter_status=published&filter_taxonomy_type=${encodeURIComponent(taxonomyType)}&filter_taxonomy_slug=${encodeURIComponent(termSlug)}`,
       dbLocale,
     ),
   );
@@ -358,10 +393,11 @@ async function fetchTaxonomyArchivePosts(
   };
 }
 
-function applyTaxonomyContext(
+async function applyTaxonomyContext(
   base: ThemeRenderContext,
   route: ResolvedPublicRoute,
   term: ApiTaxonomyTerm,
+  localized: { name: string; slug: string },
   posts: ThemePostView[],
   page: number,
   total: number,
@@ -369,13 +405,16 @@ function applyTaxonomyContext(
   origin: string,
   siteName: string,
   siteDescription: string,
-): void {
-  const termName = String(term.name ?? route.taxonomySlug ?? "");
+  taxonomyResolver: TaxonomyTranslationResolver,
+): Promise<void> {
+  const termName = localized.name || String(term.name ?? route.taxonomySlug ?? "");
+  const localizedSlug = localized.slug || String(term.slug ?? route.taxonomySlug ?? "");
+  const canonicalSlug = String(term.slug ?? "");
   base.posts = posts.length > 0 ? posts : base.posts;
   base.have_posts = base.posts.length > 0;
   base.route.kind = "taxonomy";
   base.route.taxonomy_type = route.taxonomyType;
-  base.route.taxonomy_slug = route.taxonomySlug;
+  base.route.taxonomy_slug = localizedSlug;
   base.is_archive = true;
   base.is_search = false;
   base.is_front_page = false;
@@ -403,14 +442,22 @@ function applyTaxonomyContext(
     ...(posts[0]?.cover_image ? { ogImage: posts[0].cover_image } : {}),
   });
   const taxonomyMeta =
-    route.taxonomyType && route.taxonomySlug
-      ? { type: route.taxonomyType, slug: route.taxonomySlug }
+    route.taxonomyType && localizedSlug
+      ? { type: route.taxonomyType, slug: localizedSlug }
       : undefined;
   base.body_class = buildBodyClass(route, undefined, "taxonomy", taxonomyMeta);
-  base.locale_switcher = buildLocaleSwitcher(route.locale, route, "taxonomy");
+  base.locale_switcher = await buildLocaleSwitcher(route.locale, route, "taxonomy", {
+    taxonomyCanonicalSlug: canonicalSlug,
+    resolveLocalizedTaxonomySlug: (slug, locale) =>
+      taxonomyResolver.getLocalizedSlug(slug, locale),
+  });
 }
 
-function applyNotFoundContext(base: ThemeRenderContext, route: ResolvedPublicRoute, origin: string): void {
+async function applyNotFoundContext(
+  base: ThemeRenderContext,
+  route: ResolvedPublicRoute,
+  origin: string,
+): Promise<void> {
   base.route.kind = "404";
   base.is_404 = true;
   base.is_search = false;
@@ -434,7 +481,7 @@ function applyNotFoundContext(base: ThemeRenderContext, route: ResolvedPublicRou
     canonicalUrl: `${origin}${route.path}`,
   });
   base.body_class = buildBodyClass(route, undefined, "404");
-  base.locale_switcher = buildLocaleSwitcher(route.locale, route, "404");
+  base.locale_switcher = await buildLocaleSwitcher(route.locale, route, "404");
 }
 
 async function fetchSearchResults(
@@ -489,7 +536,7 @@ async function fetchSearchResults(
   };
 }
 
-function applySearchContext(
+async function applySearchContext(
   base: ThemeRenderContext,
   route: ResolvedPublicRoute,
   q: string,
@@ -502,7 +549,7 @@ function applySearchContext(
   siteName: string,
   siteDescription: string,
   postType?: string,
-): void {
+): Promise<void> {
   const archiveTitle = q ? `Busca: ${q}` : "Busca";
   base.posts = posts;
   base.have_posts = posts.length > 0;
@@ -543,7 +590,7 @@ function applySearchContext(
     ...(posts[0]?.cover_image ? { ogImage: posts[0].cover_image } : {}),
   });
   base.body_class = buildBodyClass(route, undefined, "search");
-  base.locale_switcher = buildLocaleSwitcher(route.locale, route, "search");
+  base.locale_switcher = await buildLocaleSwitcher(route.locale, route, "search");
 }
 
 type ApiTaxonomyRow = {
@@ -589,7 +636,7 @@ async function fetchMenusByLocation(
       }
     }
 
-    const byLocation: Record<string, Array<{ label: string; url: string; order: number }>> = {};
+    const byLocation: Record<string, import("../engine/menu-items-url.ts").MenuItemFlatPublic[]> = {};
 
     for (const row of children) {
       const parentId = row.parent_id;
@@ -597,22 +644,16 @@ async function fetchMenusByLocation(
       const location = slugByParentId.get(parentId);
       if (!location) continue;
 
-      const meta = parsePostMetaValues(row.meta_values);
-      const item = menuChildPostToLinkItem(row, dbLocale);
+      const item = menuChildPostToFlatItem(row, dbLocale);
       if (!item) continue;
 
       if (!byLocation[location]) byLocation[location] = [];
-      byLocation[location].push({
-        ...item,
-        order: menuOrderFromMeta(meta),
-      });
+      byLocation[location].push(item);
     }
 
-    const menusByLocation: Record<string, { label: string; url: string }[]> = {};
-    for (const [location, items] of Object.entries(byLocation)) {
-      menusByLocation[location] = items
-        .sort((a, b) => a.order - b.order)
-        .map(({ label, url }) => ({ label, url }));
+    const menusByLocation: Record<string, import("../engine/menu-items-url.ts").MenuItemPublicRaw[]> = {};
+    for (const [location, flatItems] of Object.entries(byLocation)) {
+      menusByLocation[location] = buildMenuItemTree(flatItems);
     }
 
     return buildThemeMenusRecord(menusByLocation, currentPath);
@@ -655,10 +696,49 @@ function attachGetTaxonomiesHandler(
   ctx: ThemeRenderContext,
   client: AuthenticatedClient,
   dbLocale: string,
+  taxonomyResolver: TaxonomyTranslationResolver,
 ): void {
-  ctx.get_taxonomies = createGetTaxonomiesHandler(async (postType, taxonomyType) =>
-    fetchTaxonomiesForPostType(client, postType, taxonomyType, dbLocale),
-  );
+  ctx.get_taxonomies = createGetTaxonomiesHandler(async (postType, taxonomyType) => {
+    const items = await fetchTaxonomiesForPostType(client, postType, taxonomyType, dbLocale);
+    return taxonomyResolver.localizeTerms(
+      items.map((item) => ({
+        id: item.id,
+        name: String(item.name ?? ""),
+        slug: String(item.slug ?? ""),
+        type: taxonomyType,
+      })),
+    );
+  });
+}
+
+function attachGetTaxonomiesLocaleHandler(
+  ctx: ThemeRenderContext,
+  client: AuthenticatedClient,
+): void {
+  ctx.get_taxonomies_locale = createGetTaxonomiesLocaleHandler(async (postType, taxonomyType, locale) => {
+    const localeResolver = createConnectTaxonomyTranslationResolver(client, locale);
+    const items = await fetchTaxonomiesForPostType(client, postType, taxonomyType, locale);
+    const [taxonomy, localized] = await Promise.all([
+      localeResolver.localizeTaxonomyType(taxonomyType),
+      localeResolver.localizeTerms(
+        items.map((item) => ({
+          id: item.id,
+          name: String(item.name ?? ""),
+          slug: String(item.slug ?? ""),
+          type: taxonomyType,
+        })),
+      ),
+    ]);
+    return {
+      taxonomy,
+      values: localized.map((term) => ({
+        id: term.id ?? 0,
+        name: term.name,
+        slug: term.slug,
+        locale,
+      })),
+    };
+  });
 }
 
 async function fetchSourcePostForRelated(
@@ -675,7 +755,7 @@ async function fetchSourcePostForRelated(
     }
     return await fetchJson<ApiPostRow>(
       client,
-      withLocaleQuery(`/api/content/${encodeURIComponent(String(idOrSlug))}`, dbLocale),
+      withLocaleQuery(`/api/content/posts/${encodeURIComponent(String(idOrSlug))}`, dbLocale),
     );
   } catch {
     return null;
@@ -731,7 +811,9 @@ async function fetchRelatedPostsViaApi(
       const list = await fetchJson<ApiListResponse<ApiPostRow>>(
         client,
         withLocaleQuery(
-          `/api/content/posts?limit=${limit}&order=published_at&orderDir=desc&filter_status=published&filter_taxonomy_type=category&filter_taxonomy_slug=${encodeURIComponent(slug)}`,
+          withPostsListIncludes(
+            `/api/content/posts?limit=${limit}&order=published_at&orderDir=desc&filter_status=published&filter_taxonomy_type=category&filter_taxonomy_slug=${encodeURIComponent(slug)}`,
+          ),
           dbLocale,
         ),
       );
@@ -761,6 +843,72 @@ async function fetchRelatedPostsViaApi(
   return result;
 }
 
+async function fetchTaxonomyPostsViaApi(
+  client: AuthenticatedClient,
+  taxonomyType: string,
+  taxonomySlug: string,
+  limit: number,
+  dbLocale: string,
+  attachmentCache: CoverImageAttachmentCache,
+  taxonomyResolver: TaxonomyTranslationResolver,
+): Promise<ThemePostView[]> {
+  try {
+    const canonicalSlug = await taxonomyResolver.resolveCanonicalSlugForFilter(
+      taxonomyType,
+      taxonomySlug,
+    );
+    if (!canonicalSlug) return [];
+
+    const list = await fetchJson<ApiListResponse<ApiPostRow>>(
+      client,
+      withLocaleQuery(
+        withPostsListIncludes(
+          `/api/content/posts?limit=${limit}&order=order&orderDir=desc&filter_status=published&filter_taxonomy_type=${encodeURIComponent(taxonomyType)}&filter_taxonomy_slug=${encodeURIComponent(canonicalSlug)}`,
+        ),
+        dbLocale,
+      ),
+    );
+    return mapPublicListPosts(
+      list.items ?? [],
+      client.origin,
+      client,
+      attachmentCache,
+      dbLocale,
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function fetchPostsByTypeViaApi(
+  client: AuthenticatedClient,
+  postTypeSlug: string,
+  limit: number,
+  dbLocale: string,
+  attachmentCache: CoverImageAttachmentCache,
+  includeCustomFields = false,
+): Promise<ThemePostView[]> {
+  try {
+    const basePath = `/api/content/posts?limit=${limit}&order=order&orderDir=desc&filter_status=published&filter_post_type=${encodeURIComponent(postTypeSlug)}`;
+    const list = await fetchJson<ApiListResponse<ApiPostRow>>(
+      client,
+      withLocaleQuery(
+        includeCustomFields ? withPostsListIncludes(basePath) : basePath,
+        dbLocale,
+      ),
+    );
+    return mapPublicListPosts(
+      list.items ?? [],
+      client.origin,
+      client,
+      attachmentCache,
+      dbLocale,
+    );
+  } catch {
+    return [];
+  }
+}
+
 function attachGetRelatedPostsHandler(
   ctx: ThemeRenderContext,
   client: AuthenticatedClient,
@@ -769,6 +917,49 @@ function attachGetRelatedPostsHandler(
 ): void {
   ctx.get_related_posts = createGetRelatedPostsHandler(async (idOrSlug, limit) =>
     fetchRelatedPostsViaApi(client, idOrSlug, limit, dbLocale, attachmentCache),
+  );
+}
+
+function attachGetTaxonomyPostsHandler(
+  ctx: ThemeRenderContext,
+  client: AuthenticatedClient,
+  dbLocale: string,
+  attachmentCache: CoverImageAttachmentCache,
+  taxonomyResolver: TaxonomyTranslationResolver,
+): void {
+  ctx.get_taxonomy_posts = createGetTaxonomyPostsHandler(
+    async (taxonomyType, taxonomySlug, limit) =>
+      fetchTaxonomyPostsViaApi(
+        client,
+        taxonomyType,
+        taxonomySlug,
+        limit,
+        dbLocale,
+        attachmentCache,
+        taxonomyResolver,
+      ),
+  );
+}
+
+function attachGetPostsHandler(
+  ctx: ThemeRenderContext,
+  client: AuthenticatedClient,
+  dbLocale: string,
+  attachmentCache: CoverImageAttachmentCache,
+): void {
+  ctx.get_posts = createGetPostsHandler(async (postTypeSlug, limit) =>
+    fetchPostsByTypeViaApi(client, postTypeSlug, limit, dbLocale, attachmentCache, false),
+  );
+}
+
+function attachGetPostsDetailsHandler(
+  ctx: ThemeRenderContext,
+  client: AuthenticatedClient,
+  dbLocale: string,
+  attachmentCache: CoverImageAttachmentCache,
+): void {
+  ctx.get_posts_details = createGetPostsHandler(async (postTypeSlug, limit) =>
+    fetchPostsByTypeViaApi(client, postTypeSlug, limit, dbLocale, attachmentCache, true),
   );
 }
 
@@ -810,14 +1001,23 @@ function attachGetAuthorHandler(
 export async function buildConnectedContext(
   client: AuthenticatedClient,
   url: URL,
-  route: ResolvedPublicRoute,
+  pathname: string,
+  searchParams: URLSearchParams,
   pkg: ThemePackageRecord,
 ): Promise<ThemeRenderContext> {
-  const base = buildMockContext(url, route, pkg);
+  const dbLocale = publicLocaleToDbCode(pathname.startsWith("/en") ? "en" : "pt-br");
+  const taxonomyResolver = createConnectTaxonomyTranslationResolver(client, dbLocale);
+  const templateKeys = Object.keys(pkg.templates);
+  const routeDeps = await createConnectRouteKindDeps(client, dbLocale, taxonomyResolver);
+  const route = await resolveThemeRoute(pathname, searchParams, templateKeys, routeDeps);
+  const base = await buildMockContext(url, pathname, searchParams, pkg, route);
   const attachmentCache: CoverImageAttachmentCache = new Map();
-  const dbLocale = publicLocaleToDbCode(route.locale);
-  attachGetTaxonomiesHandler(base, client, dbLocale);
+  attachGetTaxonomiesHandler(base, client, dbLocale, taxonomyResolver);
+  attachGetTaxonomiesLocaleHandler(base, client);
   attachGetRelatedPostsHandler(base, client, dbLocale, attachmentCache);
+  attachGetTaxonomyPostsHandler(base, client, dbLocale, attachmentCache, taxonomyResolver);
+  attachGetPostsHandler(base, client, dbLocale, attachmentCache);
+  attachGetPostsDetailsHandler(base, client, dbLocale, attachmentCache);
   attachGetAuthorHandler(base, client, dbLocale);
 
   try {
@@ -854,7 +1054,7 @@ export async function buildConnectedContext(
         attachmentCache,
         postType,
       );
-      applySearchContext(
+      await applySearchContext(
         base,
         route,
         q,
@@ -873,23 +1073,28 @@ export async function buildConnectedContext(
 
     if (route.kind === "taxonomy" && route.taxonomyType && route.taxonomySlug) {
       const page = route.page ?? 1;
-      const term = await fetchTaxonomyTerm(client, route.taxonomyType, route.taxonomySlug, dbLocale);
+      const term = await taxonomyResolver.resolveTermBySlug(
+        route.taxonomyType,
+        route.taxonomySlug,
+      );
       if (!term) {
-        applyNotFoundContext(base, route, client.origin);
+        await applyNotFoundContext(base, route, client.origin);
         return base;
       }
+      const localized = await taxonomyResolver.localizeTerm(term);
       const { posts, total, limit } = await fetchTaxonomyArchivePosts(
         client,
         route.taxonomyType,
-        route.taxonomySlug,
+        term.slug,
         page,
         dbLocale,
         attachmentCache,
       );
-      applyTaxonomyContext(
+      await applyTaxonomyContext(
         base,
         route,
         term,
+        localized,
         posts,
         page,
         total,
@@ -897,11 +1102,20 @@ export async function buildConnectedContext(
         client.origin,
         siteName,
         siteDescription,
+        taxonomyResolver,
       );
       return base;
     }
 
-    const archiveRoute = resolveArchivePostTypeFromRoute(route, archivableTypes);
+    const archiveRoute =
+      route.kind === "archive" && route.postType
+        ? {
+            postType: route.postType,
+            title:
+              archivableTypes.find((type) => type.slug === route.postType)?.name ??
+              (route.postType === "post" ? "Blog" : route.postType),
+          }
+        : resolveArchivePostTypeFromRoute(route, archivableTypes);
 
     if (archiveRoute) {
       const page = route.page ?? 1;
@@ -912,7 +1126,7 @@ export async function buildConnectedContext(
         dbLocale,
         attachmentCache,
       );
-      applyArchiveContext(
+      await applyArchiveContext(
         base,
         route,
         archiveRoute,
@@ -930,7 +1144,7 @@ export async function buildConnectedContext(
     if (route.slug && route.kind !== "home") {
       const detail = await fetchJson<ApiPostRow>(
         client,
-        withLocaleQuery(`/api/content/${encodeURIComponent(route.slug)}`, dbLocale),
+        withLocaleQuery(`/api/content/posts/${encodeURIComponent(route.slug)}`, dbLocale),
       );
       const post = await enrichApiPost(detail, client.origin, client, attachmentCache, dbLocale);
       const kind = inferRouteKind(route, post);
@@ -959,7 +1173,7 @@ export async function buildConnectedContext(
         ...(post.cover_image ? { ogImage: post.cover_image } : {}),
       });
       base.body_class = buildBodyClass(route, post, kind);
-      base.locale_switcher = buildLocaleSwitcher(route.locale, route, kind);
+      base.locale_switcher = await buildLocaleSwitcher(route.locale, route, kind);
       return base;
     }
 
@@ -1033,7 +1247,7 @@ export async function buildConnectedContext(
         base.seo.json_ld_html = `<script type="application/ld+json">${JSON.stringify(jsonLd.length === 1 ? jsonLd[0] : jsonLd)}</script>`;
       }
       base.body_class = buildBodyClass(route, post, "home");
-      base.locale_switcher = buildLocaleSwitcher(route.locale, route, "home");
+      base.locale_switcher = await buildLocaleSwitcher(route.locale, route, "home");
       base.is_front_page = true;
       return base;
     }

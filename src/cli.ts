@@ -9,7 +9,7 @@ const program = new Command();
 program
   .name("edgepress")
   .description("EdgePress CLI — develop and package Liquid themes")
-  .version("0.1.0");
+  .version("0.2.0");
 
 const theme = program.command("theme").description("Theme development commands");
 

@@ -21,14 +21,39 @@ export type ThemePackageRecord = {
 };
 
 export type MenuItem = {
+  id: number;
   label: string;
   url: string;
+  slug: string;
+  target_post_id?: number | null;
   active: boolean;
+  children: MenuItem[];
+  submenu_sort?: "alphabetical" | "creation";
+  submenu_display?: Array<"title" | "thumbnail" | "excerpt">;
 };
 
 export type ThemeTaxonomyView = {
   name: string;
   slug: string;
+};
+
+export type ThemeTaxonomyLocaleTermView = {
+  id: number;
+  name: string;
+  slug: string;
+  locale: string;
+};
+
+export type ThemeTaxonomyLocaleTypeView = {
+  name: string;
+  slug: string;
+  original_name: string;
+  original_slug: string;
+};
+
+export type ThemeTaxonomiesLocaleResult = {
+  taxonomy: ThemeTaxonomyLocaleTypeView;
+  values: ThemeTaxonomyLocaleTermView[];
 };
 
 export type ThemeAuthorView = {
@@ -37,17 +62,29 @@ export type ThemeAuthorView = {
   description: string;
 };
 
+export type CustomFieldItem = {
+  id: number;
+  title: string;
+  slug: string;
+  fields: Array<{ name: string; value: string; type?: string }>;
+  template?: boolean;
+  field_type?: string[];
+};
+
 export type ThemePostView = {
   id: number;
   title: string;
   slug: string;
   excerpt: string;
   body_html: string;
+  /** BlockNote JSON blocks for optional client hydration ({% blocknote_content %}). */
+  body_blocks?: string | null;
   author_name: string;
   published_at: number | null;
   post_type_slug: string;
   cover_image?: string;
   meta: Record<string, string>;
+  custom_fields?: CustomFieldItem[];
 };
 
 export type ThemePagination = {
@@ -94,14 +131,19 @@ export type ThemeRenderContext = {
     slug: string;
     version: string;
     asset_base_url: string;
+    supports: string[];
   };
   route: {
     kind: ThemeRouteKind;
     path: string;
     locale: string;
+    /** Liquid template key selected by the file router (e.g. `portfolio/[category]`). */
+    template_key: string;
+    /** Dynamic URL segments captured from the matched template pattern. */
+    params: Record<string, string>;
     /** DB taxonomy type when `kind` is `taxonomy` (e.g. `category`). */
     taxonomy_type?: string;
-    /** Term slug when `kind` is `taxonomy` (e.g. `visum`). */
+    /** Term slug when `kind` is `taxonomy` (canonical DB slug). */
     taxonomy_slug?: string;
   };
   body_class: string;
@@ -127,8 +169,30 @@ export type ThemeRenderContext = {
   have_posts: boolean;
   /** Fetch taxonomy terms for a post type (used by {% get_taxonomies %} tag). */
   get_taxonomies?: (postType: string, taxonomyType: string) => Promise<ThemeTaxonomyView[]>;
+  /** Fetch taxonomy terms for a post type localized to a specific locale (used by {% get_taxonomies_locale %} tag). */
+  get_taxonomies_locale?: (
+    postType: string,
+    taxonomyType: string,
+    locale: string,
+  ) => Promise<ThemeTaxonomiesLocaleResult>;
   /** Fetch related posts by shared category (used by {% get_related_posts %} tag). */
   get_related_posts?: (idOrSlug: string | number, limit?: number) => Promise<ThemePostView[]>;
+  /** Fetch posts by taxonomy term (used by {% get_taxonomy_posts %} tag). */
+  get_taxonomy_posts?: (
+    taxonomyType: string,
+    taxonomySlug: string,
+    limit?: number,
+  ) => Promise<ThemePostView[]>;
+  /** Fetch posts by post type (used by {% get_posts %} tag). */
+  get_posts?: (
+    postTypeSlug: string,
+    limit?: number,
+  ) => Promise<ThemePostView[]>;
+  /** Fetch posts with custom fields (used by {% get_posts_details %} tag). */
+  get_posts_details?: (
+    postTypeSlug: string,
+    limit?: number,
+  ) => Promise<ThemePostView[]>;
   /** Fetch author for a post (used by {% get_author %} tag). */
   get_author?: (idOrSlug: string | number) => Promise<ThemeAuthorView | null>;
   content?: string;
@@ -138,11 +202,12 @@ export type ResolvedPublicRoute = {
   kind: ThemeRouteKind;
   locale: string;
   path: string;
+  templateKey: string;
+  params: Record<string, string>;
   slug?: string;
   postType?: string;
   page?: number;
   taxonomyType?: string;
   taxonomySlug?: string;
-  taxonomyBase?: string;
   searchQuery?: string;
 };
