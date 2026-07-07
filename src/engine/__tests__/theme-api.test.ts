@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Liquid } from "liquidjs";
 import { registerThemeApi, shouldLoadBlockNoteAssets } from "../theme-api.ts";
 import type { ThemeRenderContext } from "../types.ts";
@@ -28,7 +28,7 @@ function baseContext(overrides: Partial<ThemeRenderContext> = {}): ThemeRenderCo
       asset_base_url: "http://localhost:4322/themes-assets/test",
       supports: ["blocknote"],
     },
-    route: { kind: "home", path: "/", locale: "pt-br" },
+    route: { kind: "home", path: "/", locale: "pt-br", template_key: "index", params: {} },
     body_class: "route-home",
     locale_switcher: [],
     post: {
@@ -98,5 +98,55 @@ describe("blocknote_content tag", () => {
         }),
       ),
     ).toBe(false);
+  });
+});
+
+describe("get_taxonomies_locale tag", () => {
+  it("assigns taxonomy metadata and localized terms", async () => {
+    const liquid = new Liquid();
+    registerThemeApi(liquid);
+    const html = await liquid.parseAndRender(
+      `{% get_taxonomies_locale 'post', 'category', 'pt-br' as categories %}
+{{ categories.taxonomy.name }}:{{ categories.taxonomy.slug }}:{{ categories.taxonomy.original_name }}:{{ categories.taxonomy.original_slug }}
+{% for term in categories.values %}{{ term.id }}:{{ term.name }}:{{ term.slug }}:{{ term.locale }}{% endfor %}`,
+      baseContext({
+        get_taxonomies_locale: async (_postType, _taxonomyType, locale) => ({
+          taxonomy: {
+            name: "Categorias",
+            slug: "category",
+            original_name: "Category",
+            original_slug: "category",
+          },
+          values: [{ id: 12, name: "Tecnologia", slug: "tecnologia", locale }],
+        }),
+      }) as unknown as object,
+    );
+
+    expect(html).toContain("Categorias:category:Category:category");
+    expect(html).toContain("12:Tecnologia:tecnologia:pt-br");
+  });
+});
+
+describe("get_taxonomy_posts tag", () => {
+  it("resolves dynamic route params at render time", async () => {
+    const liquid = new Liquid();
+    registerThemeApi(liquid);
+    const handler = vi.fn(async () => [{ id: 1, title: "Item", slug: "item", excerpt: "", body_html: "", author_name: "", published_at: null, post_type_slug: "post", meta: {} }]);
+
+    await liquid.parseAndRender(
+      `{% get_taxonomy_posts 'category', route.params.category as items %}{{ items[0].title }}`,
+      baseContext({
+        route: {
+          kind: "page",
+          path: "/portfolio/design",
+          locale: "pt-br",
+          template_key: "portfolio/[category]",
+          params: { category: "design" },
+        },
+        get_taxonomy_posts: handler,
+      }) as unknown as object,
+    );
+
+    expect(handler).toHaveBeenCalledWith("category", "design", undefined);
   });
 });
