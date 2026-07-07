@@ -192,6 +192,50 @@ figcaption {
   border-radius: 10px;
 }
 
+.site-nav ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.site-nav a {
+  text-decoration: none;
+  color: var(--text-main);
+}
+
+.site-nav a:hover,
+.site-nav .is-active > a {
+  text-decoration: underline;
+}
+
+.site-nav .has-submenu {
+  position: relative;
+}
+
+.site-nav .submenu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  flex-direction: column;
+  min-width: 10rem;
+  padding: 0.5rem 0;
+  margin: 0;
+  background: var(--background-body);
+  border: 1px solid var(--theme-code-inline-bg);
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  z-index: 10;
+}
+
+.site-nav .has-submenu:hover .submenu,
+.site-nav .has-submenu:focus-within .submenu {
+  display: flex;
+}
+
 .site-header-actions {
   display: flex;
   align-items: center;

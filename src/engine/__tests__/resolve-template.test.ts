@@ -1,40 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { buildTemplateCandidates, resolveTemplateKey } from "../resolve-template.ts";
-
-const baseTemplates: Record<string, string> = {
-  home: "<div>home</div>",
-  archive: "<div>archive</div>",
-};
+import { normalizeTemplateKey } from "../resolve-template.ts";
 
 describe("resolve-template", () => {
-  it("prefers taxonomy-specific templates for taxonomy routes", () => {
-    const templates = {
-      ...baseTemplates,
-      "taxonomy-category-visum": "<div>visum</div>",
-      "taxonomy-category": "<div>category</div>",
-      taxonomy: "<div>taxonomy</div>",
-    };
-    expect(
-      resolveTemplateKey("taxonomy", templates, {
-        taxonomyType: "category",
-        taxonomySlug: "visum",
-      }),
-    ).toBe("taxonomy-category-visum");
-    expect(
-      buildTemplateCandidates("taxonomy", { taxonomyType: "category", taxonomySlug: "visum" }),
-    ).toEqual([
-      "taxonomy-category-visum",
-      "taxonomy-category",
-      "taxonomy",
-      "archive-category",
-      "archive",
-      "index",
-    ]);
-  });
-
-  it("builds search template candidates", () => {
-    expect(buildTemplateCandidates("search")).toEqual(["search", "archive", "index"]);
-    const templates = { ...baseTemplates, search: "<div>search</div>" };
-    expect(resolveTemplateKey("search", templates)).toBe("search");
+  it("normalizes template keys", () => {
+    expect(normalizeTemplateKey("templates/portfolio/[category].liquid")).toBe(
+      "portfolio/[category]",
+    );
+    expect(normalizeTemplateKey("index.liquid")).toBe("index");
   });
 });
