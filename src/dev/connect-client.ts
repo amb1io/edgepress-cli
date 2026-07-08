@@ -4,6 +4,7 @@ import {
   resolveCoverImage,
   type CoverImageAttachmentCache,
 } from "../engine/cover-image.ts";
+import { buildMediaUrl } from "../engine/media-urls.ts";
 import { resolveThemeSeoContext } from "../engine/seo-head.ts";
 import type {
   MenuItem,
@@ -189,6 +190,7 @@ async function enrichApiPost(
   client: AuthenticatedClient,
   cache: CoverImageAttachmentCache,
   dbLocale: string,
+  size: import("../engine/media-urls.ts").MediaSize = "medium",
 ): Promise<ThemePostView> {
   const view = mapPost(row, baseUrl);
   const cover = await resolveCoverImage(
@@ -203,6 +205,7 @@ async function enrichApiPost(
       if (!attachment) return null;
       return parseAttachmentMeta(attachment.meta_values);
     },
+    size,
   );
   return cover ? { ...view, cover_image: cover } : view;
 }
@@ -353,7 +356,7 @@ async function applyArchiveContext(
     siteName,
     siteDescription,
     canonicalUrl: `${origin}${route.path}`,
-    ...(posts[0]?.cover_image ? { ogImage: posts[0].cover_image } : {}),
+    ...(posts[0]?.cover_image ? { ogImage: buildMediaUrl(posts[0].cover_image, "large") } : {}),
   });
   base.body_class = buildBodyClass(route, undefined, "archive");
   base.locale_switcher = await buildLocaleSwitcher(route.locale, route, "archive", {
@@ -439,7 +442,7 @@ async function applyTaxonomyContext(
     siteName,
     siteDescription,
     canonicalUrl: `${origin}${route.path}`,
-    ...(posts[0]?.cover_image ? { ogImage: posts[0].cover_image } : {}),
+    ...(posts[0]?.cover_image ? { ogImage: buildMediaUrl(posts[0].cover_image, "large") } : {}),
   });
   const taxonomyMeta =
     route.taxonomyType && localizedSlug
@@ -587,7 +590,7 @@ async function applySearchContext(
     siteName,
     siteDescription,
     canonicalUrl,
-    ...(posts[0]?.cover_image ? { ogImage: posts[0].cover_image } : {}),
+    ...(posts[0]?.cover_image ? { ogImage: buildMediaUrl(posts[0].cover_image, "large") } : {}),
   });
   base.body_class = buildBodyClass(route, undefined, "search");
   base.locale_switcher = await buildLocaleSwitcher(route.locale, route, "search");
@@ -1146,7 +1149,7 @@ export async function buildConnectedContext(
         client,
         withLocaleQuery(`/api/content/posts/${encodeURIComponent(route.slug)}`, dbLocale),
       );
-      const post = await enrichApiPost(detail, client.origin, client, attachmentCache, dbLocale);
+      const post = await enrichApiPost(detail, client.origin, client, attachmentCache, dbLocale, "large");
       const kind = inferRouteKind(route, post);
 
       base.post = post;
@@ -1170,7 +1173,7 @@ export async function buildConnectedContext(
         siteName,
         siteDescription,
         canonicalUrl: `${client.origin}${route.path}`,
-        ...(post.cover_image ? { ogImage: post.cover_image } : {}),
+        ...(post.cover_image ? { ogImage: buildMediaUrl(post.cover_image, "large") } : {}),
       });
       base.body_class = buildBodyClass(route, post, kind);
       base.locale_switcher = await buildLocaleSwitcher(route.locale, route, kind);
@@ -1202,7 +1205,7 @@ export async function buildConnectedContext(
             ),
           );
           seoPost = homeDetail;
-          post = await enrichApiPost(homeDetail, client.origin, client, attachmentCache, dbLocale);
+          post = await enrichApiPost(homeDetail, client.origin, client, attachmentCache, dbLocale, "large");
           base.post = post;
         } catch {
           base.post = undefined;
@@ -1225,10 +1228,11 @@ export async function buildConnectedContext(
                 if (!attachment) return null;
                 return parseAttachmentMeta(attachment.meta_values);
               },
+              "large",
             )
           ) ?? undefined
         : homeListPosts && posts[0]?.cover_image
-          ? posts[0].cover_image
+          ? buildMediaUrl(posts[0].cover_image, "large")
           : undefined;
 
       base.seo = resolveThemeSeoContext({
