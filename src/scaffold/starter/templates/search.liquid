@@ -3,7 +3,7 @@
   <header class="search-header">
     <h1>
       {% if search.query != blank %}
-        {% if route.locale == 'en' %}Results for “{{ search.query }}”{% else %}Resultados para “{{ search.query }}”{% endif %}
+        {% if route.locale == 'en' %}Results for "{{ search.query }}"{% else %}Resultados para "{{ search.query }}"{% endif %}
       {% else %}
         {% if route.locale == 'en' %}Search{% else %}Busca{% endif %}
       {% endif %}
@@ -16,7 +16,7 @@
       {% if item.cover_image %}
         <figure>
           <a href="{{ site.locale_prefix }}/{{ item.slug }}">
-            <img src="{{ item.cover_image }}" alt="" loading="lazy" />
+            <img src="{{ item.cover_image | image_size: 'thumbnail' }}" alt="" loading="lazy" width="300" height="300" />
           </a>
         </figure>
       {% endif %}
