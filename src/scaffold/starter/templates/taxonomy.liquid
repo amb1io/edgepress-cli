@@ -9,7 +9,7 @@
       {% if item.cover_image %}
         <figure>
           <a href="{{ site.locale_prefix }}/{{ item.slug }}">
-            <img src="{{ item.cover_image }}" alt="" loading="lazy" />
+            <img src="{{ item.cover_image | image_size: 'thumbnail' }}" alt="" loading="lazy" width="300" height="300" />
           </a>
         </figure>
       {% endif %}
